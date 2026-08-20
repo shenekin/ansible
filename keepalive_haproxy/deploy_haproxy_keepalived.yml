@@ -1,0 +1,163 @@
+---
+# =============================================================================
+# HAProxy + Keepalived 高可用负载均衡部署 Playbook
+# 适用系统：Ubuntu 24.04 LTS (Noble Numbat)
+# Ansible 版本：core 2.21+
+#
+# 用法：
+#   1. 在 inventory 中把两台 LB 节点归入 [haproxy] 组
+#   2. 为主节点设置 vrrp_priority=100，备节点设置 vrrp_priority=90
+#   3. 执行：ansible-playbook -i inventory.ini deploy_haproxy_keepalived.yml
+# =============================================================================
+
+- name: Deploy HAProxy + Keepalived HA Load Balancer
+  hosts: keepalive_haproxy
+  become: true
+  gather_facts: true
+
+  vars:
+    # ---------- 全局变量（按需修改） ----------
+    # 虚拟 IP（VIP），客户端访问的入口地址
+    vrrp_vip: "10.168.2.188"
+    # VRRP 绑定的网卡名（Ubuntu 24.04 通常是 ens33 / eth0 / enp0s3）
+    vrrp_interface: "ens18"
+    # VRRP 虚拟路由 ID（同一局域网内不能与其他 keepalived 冲突）
+    vrrp_router_id: 51
+    # 主节点优先级 100，备节点 90（可在 inventory 中按主机覆盖）
+    vrrp_priority: 100
+    # 认证密码（主备必须一致，最多 8 字符）
+    vrrp_auth_pass: "HaPass12"
+
+    # ---------- HAProxy 变量 ----------
+    haproxy_stats_port: 8404
+    haproxy_stats_user: "admin"
+    haproxy_stats_pass: "admin123"
+    # 前端监听端口
+    haproxy_frontend_port: 80
+    # 后端服务器列表（可在 inventory 或 group_vars 中覆盖）
+    haproxy_backend_servers:
+      - name: "k8s-master-01"
+        address: "10.168.2.100"
+        port: 2379
+      - name: "k8s-master-02"
+        address: "10.168.2.101"
+        port: 2379
+      - name: "k8s-master-03"
+        address: "10.168.2.102"
+        port: 2379        
+
+  tasks:
+    # -------------------------------------------------------------------------
+    # 1. 系统准备
+    # -------------------------------------------------------------------------
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      ansible.builtin.apt:
+        name:
+          - haproxy
+          - keepalived
+          - ipvsadm
+        state: present
+
+    # -------------------------------------------------------------------------
+    # 2. 内核参数：允许绑定非本地 IP（Keepalived VIP 必须）
+    # -------------------------------------------------------------------------
+    - name: Configure sysctl for non-local IP binding
+      ansible.posix.sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: true
+      loop:
+        - { name: "net.ipv4.ip_nonlocal_bind", value: "1" }
+        - { name: "net.ipv4.ip_forward", value: "1" }
+
+    # -------------------------------------------------------------------------
+    # 3. 配置 HAProxy
+    # -------------------------------------------------------------------------
+    - name: Deploy HAProxy configuration
+      ansible.builtin.template:
+        src: "templates/haproxy.cfg.j2"
+        dest: "/etc/haproxy/haproxy.cfg"
+        owner: root
+        group: root
+        mode: "0644"
+        validate: "haproxy -c -f %s"
+      notify: Restart haproxy
+
+    # -------------------------------------------------------------------------
+    # 4. 配置 Keepalived
+    # -------------------------------------------------------------------------
+    - name: Ensure keepalived config directory exists
+      ansible.builtin.file:
+        path: "/etc/keepalived"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Deploy Keepalived configuration
+      ansible.builtin.template:
+        src: "templates/keepalived.conf.j2"
+        dest: "/etc/keepalived/keepalived.conf"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart keepalived
+
+    # -------------------------------------------------------------------------
+    # 5. 防火墙放行（UFW）
+    # -------------------------------------------------------------------------
+    - name: Allow HAProxy frontend port in UFW
+      community.general.ufw:
+        rule: allow
+        port: "{{ haproxy_frontend_port }}"
+        proto: tcp
+        comment: "HAProxy frontend"
+      when: ansible_facts.ufw is defined or true
+
+    - name: Allow HAProxy stats port in UFW
+      community.general.ufw:
+        rule: allow
+        port: "{{ haproxy_stats_port }}"
+        proto: tcp
+        comment: "HAProxy stats"
+
+    - name: Allow VRRP protocol in UFW
+      community.general.ufw:
+        rule: allow
+        proto: "vrrp"
+        comment: "VRRP (Keepalived)"
+
+    # -------------------------------------------------------------------------
+    # 6. 启动并启用服务
+    # -------------------------------------------------------------------------
+    - name: Enable and start HAProxy
+      ansible.builtin.systemd:
+        name: haproxy
+        enabled: true
+        state: started
+
+    - name: Enable and start Keepalived
+      ansible.builtin.systemd:
+        name: keepalived
+        enabled: true
+        state: started
+
+  # ---------------------------------------------------------------------------
+  # Handlers
+  # ---------------------------------------------------------------------------
+  handlers:
+    - name: Restart haproxy
+      ansible.builtin.systemd:
+        name: haproxy
+        state: restarted
+
+    - name: Restart keepalived
+      ansible.builtin.systemd:
+        name: keepalived
+        state: restarted

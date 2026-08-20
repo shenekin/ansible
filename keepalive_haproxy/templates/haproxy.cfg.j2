@@ -1,0 +1,65 @@
+# =============================================================================
+# HAProxy 配置文件（由 Ansible 管理，请勿手动修改）
+# =============================================================================
+
+global
+    log /dev/log local0
+    log /dev/log local1 notice
+    chroot /var/lib/haproxy
+    stats socket /run/haproxy/admin.sock mode 660 level admin
+    stats timeout 30s
+    user haproxy
+    group haproxy
+    daemon
+
+    # 默认 SSL 配置（Ubuntu 24.04 自带）
+    ssl-default-bind-ciphers HIGH:!aNULL:!MD5
+    ssl-default-bind-options no-sslv3 no-tlsv10 no-tlsv11
+
+defaults
+    log     global
+    mode    http
+    option  httplog
+    option  dontlognull
+    option  forwardfor
+    option  http-server-close
+    timeout connect 5000
+    timeout client  50000
+    timeout server  50000
+    errorfile 400 /etc/haproxy/errors/400.http
+    errorfile 403 /etc/haproxy/errors/403.http
+    errorfile 408 /etc/haproxy/errors/408.http
+    errorfile 500 /etc/haproxy/errors/500.http
+    errorfile 502 /etc/haproxy/errors/502.http
+    errorfile 503 /etc/haproxy/errors/503.http
+    errorfile 504 /etc/haproxy/errors/504.http
+
+# -----------------------------------------------------------------------------
+# 统计面板：http://<VIP>:{{ haproxy_stats_port }}/stats
+# -----------------------------------------------------------------------------
+listen stats
+    bind *:{{ haproxy_stats_port }}
+    mode http
+    stats enable
+    stats uri /stats
+    stats refresh 10s
+    stats auth {{ haproxy_stats_user }}:{{ haproxy_stats_pass }}
+    stats admin if TRUE
+
+# -----------------------------------------------------------------------------
+# 前端：监听 {{ haproxy_frontend_port }} 端口
+# -----------------------------------------------------------------------------
+frontend http_front
+    bind *:{{ haproxy_frontend_port }}
+    default_backend http_back
+
+# -----------------------------------------------------------------------------
+# 后端：轮询负载均衡
+# -----------------------------------------------------------------------------
+backend http_back
+    balance roundrobin
+    option httpchk GET /
+    http-check expect status 200
+{% for server in haproxy_backend_servers %}
+    server {{ server.name }} {{ server.address }}:{{ server.port }} check inter 2000 rise 2 fall 3
+{% endfor %}

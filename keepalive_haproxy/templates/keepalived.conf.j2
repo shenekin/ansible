@@ -1,0 +1,49 @@
+# =============================================================================
+# Keepalived 配置文件（由 Ansible 管理，请勿手动修改）
+# =============================================================================
+
+global_defs {
+    router_id LVS_{{ vrrp_router_id }}
+    enable_script_security
+    script_user root
+}
+
+# -----------------------------------------------------------------------------
+# 健康检查脚本：HAProxy 挂了就降低优先级，触发 VIP 漂移
+# -----------------------------------------------------------------------------
+vrrp_script chk_haproxy {
+    script "/usr/bin/killall -0 haproxy"
+    interval 2
+    weight -20
+    fall 2
+    rise 2
+}
+
+# -----------------------------------------------------------------------------
+# VRRP 实例
+# -----------------------------------------------------------------------------
+vrrp_instance VI_1 {
+    state {{ 'MASTER' if vrrp_priority | int >= 100 else 'BACKUP' }}
+    interface {{ vrrp_interface }}
+    virtual_router_id {{ vrrp_router_id }}
+    priority {{ vrrp_priority }}
+    advert_int 1
+
+    authentication {
+        auth_type PASS
+        auth_pass {{ vrrp_auth_pass }}
+    }
+
+    virtual_ipaddress {
+        {{ vrrp_vip }}/24 dev {{ vrrp_interface }}
+    }
+
+    track_script {
+        chk_haproxy
+    }
+
+    # 主备切换通知脚本（可选，取消注释使用）
+    # notify_master "/etc/keepalived/notify.sh master"
+    # notify_backup "/etc/keepalived/notify.sh backup"
+    # notify_fault  "/etc/keepalived/notify.sh fault"
+}

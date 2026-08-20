@@ -1,0 +1,16 @@
+{
+  "CN": "etcd-cluster-ca",
+  "key": {
+    "algo": "rsa",
+    "size": 4096
+  },
+  "names": [
+    {
+      "C": "Asia",
+      "ST": "China",
+      "L": "Chendu",
+      "O": "etcd",
+      "OU": "etcd-cluster"
+    }
+  ]
+}

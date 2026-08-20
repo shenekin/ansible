@@ -34,6 +34,8 @@ ansible etcd01 -i etcd/inventory.ini -m ansible.builtin.ping
 ## Host Information
 
 ```bash
+# Dispaly all groups
+ ansible localhost -m debug -a 'var=groups'
 # Display gathered facts for all etcd hosts.
 ansible etcd -i etcd/inventory.ini -m ansible.builtin.setup
 
@@ -48,6 +50,8 @@ ansible all -i etcd/inventory.ini -m ansible.builtin.command \
 # Check memory usage.
 ansible all -i etcd/inventory.ini -m ansible.builtin.command \
   -a 'free -h'
+# Check network interface
+ansible all -m setup -a 'gather_subset=network filter=ansible_*'
 ```
 
 ## Package Management

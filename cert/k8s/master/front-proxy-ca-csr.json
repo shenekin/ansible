@@ -1,0 +1,16 @@
+{
+  "CN": "front-proxy-ca",
+  "key": {
+    "algo": "rsa",
+    "size": 4096
+  },
+  "names": [
+    {
+      "C": "CN",
+      "ST": "Sichuan",
+      "L": "Chengdu",
+      "O": "Kubernetes",
+      "OU": "Front Proxy"
+    }
+  ]
+}

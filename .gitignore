@@ -2,3 +2,4 @@ git
 
 # CFSSL output contains private keys and must not be committed.
 /cert/etcd/generated/
+/cert/k8s/master/generated/

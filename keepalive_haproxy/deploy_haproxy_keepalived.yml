@@ -23,8 +23,6 @@
     vrrp_interface: "ens18"
     # VRRP 虚拟路由 ID（同一局域网内不能与其他 keepalived 冲突）
     vrrp_router_id: 51
-    # 主节点优先级 100，备节点 90（可在 inventory 中按主机覆盖）
-    vrrp_priority: 100
     # 认证密码（主备必须一致，最多 8 字符）
     vrrp_auth_pass: "HaPass12"
 

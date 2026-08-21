@@ -1,0 +1,22 @@
+[Unit]
+Description=Kubernetes Scheduler
+Documentation=https://kubernetes.io/docs/reference/command-line-tools-reference/kube-scheduler/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=root
+ExecStart=/usr/local/bin/kube-scheduler \
+  --bind-address=0.0.0.0 \
+  --secure-port=10259 \
+  --kubeconfig=/etc/kubernetes/scheduler.conf \
+  --authentication-kubeconfig=/etc/kubernetes/scheduler.conf \
+  --authorization-kubeconfig=/etc/kubernetes/scheduler.conf \
+  --client-ca-file=/etc/kubernetes/pki/ca.crt \
+  --leader-elect=true
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

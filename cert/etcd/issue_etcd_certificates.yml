@@ -1,92 +1,4 @@
 ---
-- name: Generate etcd certificates with CFSSL
-  hosts: localhost
-  connection: local
-  gather_facts: false
-  vars:
-    cert_output_dir: "{{ playbook_dir }}/generated"
-
-  tasks:
-    - name: Check for cfssl
-      ansible.builtin.shell: command -v cfssl
-      register: cfssl_binary
-      changed_when: false
-      failed_when: cfssl_binary.rc != 0
-
-    - name: Check for cfssljson
-      ansible.builtin.shell: command -v cfssljson
-      register: cfssljson_binary
-      changed_when: false
-      failed_when: cfssljson_binary.rc != 0
-
-    - name: Create local certificate output directory
-      ansible.builtin.file:
-        path: "{{ cert_output_dir }}"
-        state: directory
-        mode: "0700"
-
-    - name: Copy the CFSSL CA configuration
-      ansible.builtin.copy:
-        src: ca-config.json
-        dest: "{{ cert_output_dir }}/ca-config.json"
-        mode: "0600"
-
-    - name: Copy the CFSSL CA CSR definition
-      ansible.builtin.copy:
-        src: ca-csr.json
-        dest: "{{ cert_output_dir }}/ca-csr.json"
-        mode: "0600"
-
-    - name: Generate the etcd certificate authority
-      ansible.builtin.shell: |
-        cfssl gencert -initca ca-csr.json | cfssljson -bare ca
-      args:
-        chdir: "{{ cert_output_dir }}"
-        creates: "{{ cert_output_dir }}/ca.pem"
-      no_log: true
-
-    - name: Create a certificate signing request for each etcd node
-      ansible.builtin.copy:
-        dest: "{{ cert_output_dir }}/{{ hostvars[item].etcd_name }}-csr.json"
-        mode: "0600"
-        content: |
-          {
-            "CN": "{{ hostvars[item].etcd_name }}",
-            "hosts": [
-              "{{ hostvars[item].etcd_name }}",
-              "{{ hostvars[item].ansible_host }}"
-            ],
-            "key": {
-              "algo": "rsa",
-              "size": 2048
-            },
-            "names": [
-              {
-                "C": "US",
-                "ST": "State",
-                "L": "City",
-                "O": "etcd",
-                "OU": "etcd-node"
-              }
-            ]
-          }
-      loop: "{{ groups['etcd'] }}"
-
-    - name: Generate an etcd certificate for each node
-      ansible.builtin.shell: |
-        cfssl gencert \
-          -ca=ca.pem \
-          -ca-key=ca-key.pem \
-          -config=ca-config.json \
-          -profile=etcd \
-          {{ hostvars[item].etcd_name }}-csr.json | \
-          cfssljson -bare {{ hostvars[item].etcd_name }}
-      args:
-        chdir: "{{ cert_output_dir }}"
-        creates: "{{ cert_output_dir }}/{{ hostvars[item].etcd_name }}.pem"
-      loop: "{{ groups['etcd'] }}"
-      no_log: true
-
 - name: Install etcd certificates and enable TLS
   hosts: etcd
   become: true
@@ -95,60 +7,47 @@
     cert_output_dir: "{{ playbook_dir }}/generated"
     etcd_tls_dir: /etc/etcd/pki
     etcdctl_binary: /usr/local/bin/etcdctl
+    etcd_initial_cluster: >-
+      {{ groups['etcd']
+      | map('extract', hostvars)
+      | map(attribute='etcd_name')
+      | zip(groups['etcd'] | map('extract', hostvars) | map(attribute='ansible_host'))
+      | map('join', '=')
+      | map('regex_replace', '=', '=https://', 1)
+      | map('regex_replace', '$', ':' ~ etcd_peer_port)
+      | join(',') }}
 
   pre_tasks:
-    - name: Read the current etcd systemd unit
-      ansible.builtin.shell: systemctl cat etcd.service
-      register: current_etcd_unit
-      changed_when: false
-      failed_when: false
-      delegate_to: "{{ groups['etcd'][0] }}"
-      run_once: true
+    - name: Validate the existing local certificate bundle
+      ansible.builtin.stat:
+        path: "{{ cert_output_dir }}/{{ item }}"
+      delegate_to: localhost
+      become: false
+      register: certificate_bundle
+      loop:
+        - ca.pem
+        - "{{ etcd_name }}.pem"
+        - "{{ etcd_name }}-key.pem"
 
-    - name: Read the existing HTTP member list
-      ansible.builtin.shell: >-
-        ETCDCTL_API=3 {{ etcdctl_binary }}
-        --endpoints=http://127.0.0.1:{{ etcd_client_port }}
-        member list -w json
-      register: existing_member_list
-      changed_when: false
-      failed_when: false
-      delegate_to: "{{ groups['etcd'][0] }}"
-      run_once: true
-      when:
-        - "'--cert-file=' not in current_etcd_unit.stdout"
-        - "'--key-file=' not in current_etcd_unit.stdout"
-
-    - name: Require a healthy HTTP cluster before migrating peer URLs
+    - name: Stop when an existing etcd certificate is missing
       ansible.builtin.assert:
-        that:
-          - (existing_member_list.rc | default(1) | int) == 0
-        fail_msg: >-
-          The existing etcd cluster is not reachable over HTTP. Restore quorum
-          or provide a migration plan before enabling TLS.
-      run_once: true
-      when:
-        - existing_member_list is defined
-        - "'--cert-file=' not in current_etcd_unit.stdout"
-        - "'--key-file=' not in current_etcd_unit.stdout"
+        that: item.stat.exists
+        fail_msg: "Required generated certificate is missing: {{ item.item }}"
+      loop: "{{ certificate_bundle.results }}"
 
-    - name: Migrate persisted etcd peer URLs to HTTPS
-      ansible.builtin.shell: >-
-        ETCDCTL_API=3 {{ etcdctl_binary }}
-        --endpoints=http://127.0.0.1:{{ etcd_client_port }}
-        member update {{ item.ID }}
-        --peer-urls={{ item.peerURLs[0] | regex_replace('^http://', 'https://') }}
-      loop: >-
-        {{ (existing_member_list.stdout | default('{"members": []}') | from_json).members
-        | default([]) }}
-      when:
-        - existing_member_list is defined
-        - (existing_member_list.rc | default(1) | int) == 0
-        - "'--cert-file=' not in (current_etcd_unit.stdout | default(''))"
-        - "'--key-file=' not in (current_etcd_unit.stdout | default(''))"
-        - item.peerURLs[0] is match('^http://')
-      delegate_to: "{{ groups['etcd'][0] }}"
-      run_once: true
+    - name: Verify the existing certificate matches this etcd host IP
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - x509
+          - -in
+          - "{{ cert_output_dir }}/{{ etcd_name }}.pem"
+          - -checkip
+          - "{{ ansible_host }}"
+          - -noout
+      delegate_to: localhost
+      become: false
+      changed_when: false
 
   tasks:
     - name: Ensure the etcd group exists

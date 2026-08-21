@@ -1,0 +1,41 @@
+[Unit]
+Description=Kubernetes API Server
+Documentation=https://kubernetes.io/docs/reference/command-line-tools-reference/kube-apiserver/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=root
+ExecStart=/usr/local/bin/kube-apiserver \
+  --advertise-address={{ kubernetes_api_server_address }} \
+  --bind-address=0.0.0.0 \
+  --secure-port={{ kubernetes_api_server_port }} \
+  --service-cluster-ip-range={{ kubernetes_service_cidr }} \
+  --service-account-issuer=https://kubernetes.default.svc.cluster.local \
+  --service-account-key-file=/etc/kubernetes/pki/sa.pub \
+  --service-account-signing-key-file=/etc/kubernetes/pki/sa.key \
+  --tls-cert-file=/etc/kubernetes/pki/apiserver.crt \
+  --tls-private-key-file=/etc/kubernetes/pki/apiserver.key \
+  --client-ca-file=/etc/kubernetes/pki/ca.crt \
+  --kubelet-client-certificate=/etc/kubernetes/pki/apiserver-kubelet-client.crt \
+  --kubelet-client-key=/etc/kubernetes/pki/apiserver-kubelet-client.key \
+  --kubelet-certificate-authority=/etc/kubernetes/pki/ca.crt \
+  --requestheader-client-ca-file=/etc/kubernetes/pki/front-proxy-ca.crt \
+  --proxy-client-cert-file=/etc/kubernetes/pki/front-proxy-client.crt \
+  --proxy-client-key-file=/etc/kubernetes/pki/front-proxy-client.key \
+  --requestheader-allowed-names=front-proxy-client \
+  --requestheader-extra-headers-prefix=X-Remote-Extra- \
+  --requestheader-group-headers=X-Remote-Group \
+  --requestheader-username-headers=X-Remote-User \
+  --authorization-mode=Node,RBAC \
+  --enable-admission-plugins=NodeRestriction \
+  --etcd-servers={{ kubernetes_etcd_endpoints }} \
+  --etcd-cafile={{ kubernetes_etcd_ca_file }} \
+  --etcd-certfile={{ kubernetes_etcd_cert_file }} \
+  --etcd-keyfile={{ kubernetes_etcd_key_file }}
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,28 @@
+[Unit]
+Description=Kubernetes Controller Manager
+Documentation=https://kubernetes.io/docs/reference/command-line-tools-reference/kube-controller-manager/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=root
+ExecStart=/usr/local/bin/kube-controller-manager \
+  --bind-address=0.0.0.0 \
+  --secure-port=10257 \
+  --kubeconfig=/etc/kubernetes/controller-manager.conf \
+  --authentication-kubeconfig=/etc/kubernetes/controller-manager.conf \
+  --authorization-kubeconfig=/etc/kubernetes/controller-manager.conf \
+  --client-ca-file=/etc/kubernetes/pki/ca.crt \
+  --cluster-signing-cert-file=/etc/kubernetes/pki/ca.crt \
+  --cluster-signing-key-file=/etc/kubernetes/pki/ca.key \
+  --root-ca-file=/etc/kubernetes/pki/ca.crt \
+  --service-account-private-key-file=/etc/kubernetes/pki/sa.key \
+  --use-service-account-credentials=true \
+  --cluster-cidr={{ kubernetes_pod_cidr | default('192.168.0.0/16') }} \
+  --leader-elect=true
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

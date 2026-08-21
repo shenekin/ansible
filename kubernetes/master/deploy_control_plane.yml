@@ -1,0 +1,344 @@
+---
+- name: Deploy Kubernetes 1.25 control plane binaries and services
+  hosts: kube_control_plane
+  become: true
+  gather_facts: true
+
+  vars:
+    kubernetes_download_url: "https://dl.k8s.io/release/v{{ kubernetes_version }}/bin/linux/{{ kubernetes_arch }}"
+    kubernetes_archive: "/tmp/kubernetes-server-linux-{{ kubernetes_arch }}.tar.gz"
+    kubernetes_download_dir: "/tmp/kubernetes-{{ kubernetes_version }}"
+    kubernetes_install_dir: "/opt/kubernetes-{{ kubernetes_version }}"
+    kubernetes_binary_dir: "/usr/local/bin"
+    kubernetes_config_dir: "/etc/kubernetes"
+    kubernetes_pki_dir: "/etc/kubernetes/pki"
+    kubernetes_manifest_dir: "/etc/kubernetes/manifests"
+    kubernetes_runtime_dir: "/var/lib/kubelet"
+    etcd_tls_dir: /etc/etcd/pki
+    kubernetes_binaries:
+      - kube-apiserver
+      - kube-controller-manager
+      - kube-scheduler
+      - kubectl
+    kubernetes_certificate_files:
+      - src: ca.pem
+        dest: ca.crt
+      - src: ca-key.pem
+        dest: ca.key
+      - src: apiserver.pem
+        dest: apiserver.crt
+      - src: apiserver-key.pem
+        dest: apiserver.key
+      - src: apiserver-kubelet-client.pem
+        dest: apiserver-kubelet-client.crt
+      - src: apiserver-kubelet-client-key.pem
+        dest: apiserver-kubelet-client.key
+      - src: front-proxy-ca.pem
+        dest: front-proxy-ca.crt
+      - src: front-proxy-ca-key.pem
+        dest: front-proxy-ca.key
+      - src: front-proxy-client.pem
+        dest: front-proxy-client.crt
+      - src: front-proxy-client-key.pem
+        dest: front-proxy-client.key
+      - src: sa.key
+        dest: sa.key
+      - src: sa.pub
+        dest: sa.pub
+    etcd_certificate_files:
+      - src: ca.pem
+        dest: ca.pem
+      - src: "{{ etcd_certificate_name }}.pem"
+        dest: server.pem
+      - src: "{{ etcd_certificate_name }}-key.pem"
+        dest: server-key.pem
+
+  pre_tasks:
+    - name: Validate the local etcd TLS certificate bundle
+      ansible.builtin.stat:
+        path: "{{ etcd_cert_source }}/{{ item }}"
+      delegate_to: localhost
+      become: false
+      register: etcd_certificate_bundle
+      loop:
+        - ca.pem
+        - "{{ etcd_certificate_name }}.pem"
+        - "{{ etcd_certificate_name }}-key.pem"
+
+    - name: Stop when a required etcd certificate is missing
+      ansible.builtin.assert:
+        that: item.stat.exists
+        fail_msg: "Required etcd certificate is missing: {{ item.item }}"
+      loop: "{{ etcd_certificate_bundle.results }}"
+
+    - name: Verify the etcd certificate matches the inventory host
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - x509
+          - -in
+          - "{{ etcd_cert_source }}/{{ etcd_certificate_name }}.pem"
+          - -checkip
+          - "{{ ansible_host }}"
+          - -noout
+      delegate_to: localhost
+      become: false
+      changed_when: false
+
+  tasks:
+    - name: Create the etcd TLS directory
+      ansible.builtin.file:
+        path: "{{ etcd_tls_dir }}"
+        state: directory
+        owner: root
+        group: etcd
+        mode: '0750'
+
+    - name: Install etcd TLS certificates for kube-apiserver
+      ansible.builtin.copy:
+        src: "{{ etcd_cert_source }}/{{ item.src }}"
+        dest: "{{ etcd_tls_dir }}/{{ item.dest }}"
+        owner: root
+        group: etcd
+        mode: '0640'
+        force: true
+      loop: "{{ etcd_certificate_files }}"
+      notify: Restart Kubernetes control plane
+
+    - name: Protect the etcd private key
+      ansible.builtin.file:
+        path: "{{ etcd_tls_dir }}/server-key.pem"
+        owner: etcd
+        group: etcd
+        mode: '0600'
+      notify: Restart Kubernetes control plane
+
+    - name: Verify installed etcd TLS client files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: etcd_tls_files
+      loop:
+        - "{{ kubernetes_etcd_ca_file }}"
+        - "{{ kubernetes_etcd_cert_file }}"
+        - "{{ kubernetes_etcd_key_file }}"
+
+    - name: Stop when an etcd TLS client file is missing
+      ansible.builtin.assert:
+        that: item.stat.exists
+        fail_msg: "Required etcd TLS file is missing: {{ item.item }}"
+      loop: "{{ etcd_tls_files.results }}"
+
+    - name: Validate the local Kubernetes certificate bundle
+      ansible.builtin.stat:
+        path: "{{ kubernetes_cert_source }}/{{ item }}"
+      delegate_to: localhost
+      become: false
+      register: certificate_bundle
+      loop:
+        - ca.pem
+        - ca-key.pem
+        - apiserver.pem
+        - apiserver-key.pem
+        - apiserver-kubelet-client.pem
+        - apiserver-kubelet-client-key.pem
+        - front-proxy-ca.pem
+        - front-proxy-ca-key.pem
+        - front-proxy-client.pem
+        - front-proxy-client-key.pem
+        - sa.key
+        - sa.pub
+
+    - name: Stop when a required certificate is missing
+      ansible.builtin.assert:
+        that: item.stat.exists
+        fail_msg: "Required certificate is missing: {{ item.item }}"
+      loop: "{{ certificate_bundle.results }}"
+
+    - name: Install archive tools on Debian targets
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - tar
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      when: ansible_facts.os_family == 'Debian'
+
+    - name: Create Kubernetes system group
+      ansible.builtin.group:
+        name: kubernetes
+        system: true
+        state: present
+
+    - name: Create Kubernetes system user
+      ansible.builtin.user:
+        name: kubernetes
+        group: kubernetes
+        system: true
+        shell: /usr/sbin/nologin
+        home: /var/lib/kubernetes
+        create_home: false
+
+    - name: Create Kubernetes directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner | default('root') }}"
+        group: "{{ item.group | default('root') }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ kubernetes_install_dir }}", mode: '0755' }
+        - { path: "{{ kubernetes_config_dir }}", mode: '0755' }
+        - { path: "{{ kubernetes_pki_dir }}", mode: '0700' }
+        - { path: "{{ kubernetes_manifest_dir }}", mode: '0755' }
+        - { path: /var/lib/kubernetes, owner: kubernetes, group: kubernetes, mode: '0700' }
+        - { path: "{{ kubernetes_runtime_dir }}", mode: '0755' }
+
+    - name: Download Kubernetes server archive to the control machine
+      ansible.builtin.get_url:
+        url: "https://dl.k8s.io/v{{ kubernetes_version }}/kubernetes-server-linux-{{ kubernetes_arch }}.tar.gz"
+        dest: "{{ playbook_dir }}/kubernetes-server-linux-{{ kubernetes_arch }}.tar.gz"
+        mode: '0644'
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Extract Kubernetes server archive on the control machine
+      ansible.builtin.unarchive:
+        src: "{{ playbook_dir }}/kubernetes-server-linux-{{ kubernetes_arch }}.tar.gz"
+        dest: "{{ playbook_dir }}"
+        remote_src: false
+        creates: "{{ playbook_dir }}/kubernetes/server/bin/kube-apiserver"
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Copy control-plane binaries to each target
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/kubernetes/server/bin/{{ item }}"
+        dest: "{{ kubernetes_install_dir }}/{{ item }}"
+        owner: root
+        group: root
+        mode: '0755'
+      loop: "{{ kubernetes_binaries }}"
+      notify: Restart Kubernetes control plane
+
+    - name: Link control-plane binaries into PATH
+      ansible.builtin.file:
+        src: "{{ kubernetes_install_dir }}/{{ item }}"
+        dest: "{{ kubernetes_binary_dir }}/{{ item }}"
+        state: link
+        force: true
+      loop: "{{ kubernetes_binaries }}"
+      notify: Restart Kubernetes control plane
+
+    - name: Install control-plane certificates
+      ansible.builtin.copy:
+        src: "{{ kubernetes_cert_source }}/{{ item.src }}"
+        dest: "{{ kubernetes_pki_dir }}/{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '0600'
+      loop: "{{ kubernetes_certificate_files }}"
+      notify: Restart Kubernetes control plane
+
+    - name: Install admin kubeconfig
+      ansible.builtin.template:
+        src: admin.conf.j2
+        dest: "{{ kubernetes_config_dir }}/admin.conf"
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Install controller-manager kubeconfig
+      ansible.builtin.template:
+        src: controller-manager.conf.j2
+        dest: "{{ kubernetes_config_dir }}/controller-manager.conf"
+        owner: root
+        group: root
+        mode: '0600'
+      notify: Restart Kubernetes control plane
+
+    - name: Install scheduler kubeconfig
+      ansible.builtin.template:
+        src: scheduler.conf.j2
+        dest: "{{ kubernetes_config_dir }}/scheduler.conf"
+        owner: root
+        group: root
+        mode: '0600'
+      notify: Restart Kubernetes control plane
+
+    - name: Install API server systemd unit
+      ansible.builtin.template:
+        src: kube-apiserver.service.j2
+        dest: /etc/systemd/system/kube-apiserver.service
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Restart Kubernetes control plane
+
+    - name: Install controller-manager systemd unit
+      ansible.builtin.template:
+        src: kube-controller-manager.service.j2
+        dest: /etc/systemd/system/kube-controller-manager.service
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Restart Kubernetes control plane
+
+    - name: Install scheduler systemd unit
+      ansible.builtin.template:
+        src: kube-scheduler.service.j2
+        dest: /etc/systemd/system/kube-scheduler.service
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Restart Kubernetes control plane
+
+    - name: Enable and start control-plane services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+      loop:
+        - kube-apiserver
+        - kube-controller-manager
+        - kube-scheduler
+
+    - name: Verify installed Kubernetes version
+      ansible.builtin.command: "/usr/local/bin/{{ item.binary }} {{ item.arguments }}"
+      changed_when: false
+      loop:
+        - { binary: kube-apiserver, arguments: '--version' }
+        - { binary: kube-controller-manager, arguments: '--version' }
+        - { binary: kube-scheduler, arguments: '--version' }
+        - { binary: kubectl, arguments: 'version --client' }
+
+    - name: Verify control-plane service states
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+      register: control_plane_services
+      changed_when: false
+      loop:
+        - kube-apiserver
+        - kube-controller-manager
+        - kube-scheduler
+
+    - name: Assert control-plane services are active
+      ansible.builtin.assert:
+        that: item.status.ActiveState == 'active'
+        fail_msg: "{{ item.item }} is not active"
+      loop: "{{ control_plane_services.results }}"
+
+  handlers:
+    - name: Restart Kubernetes control plane
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+        daemon_reload: true
+      loop:
+        - kube-apiserver
+        - kube-controller-manager
+        - kube-scheduler

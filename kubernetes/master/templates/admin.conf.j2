@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Config
+clusters:
+- name: {{ kubernetes_cluster_name }}
+  cluster:
+    server: https://{{ kubernetes_api_server_address }}:{{ kubernetes_api_server_port }}
+    certificate-authority-data: {{ lookup('ansible.builtin.file', kubernetes_cert_source + '/ca.pem') | b64encode }}
+users:
+- name: admin
+  user:
+    client-certificate-data: {{ lookup('ansible.builtin.file', kubernetes_cert_source + '/admin.pem') | b64encode }}
+    client-key-data: {{ lookup('ansible.builtin.file', kubernetes_cert_source + '/admin-key.pem') | b64encode }}
+contexts:
+- name: admin@{{ kubernetes_cluster_name }}
+  context:
+    cluster: {{ kubernetes_cluster_name }}
+    user: admin
+current-context: admin@{{ kubernetes_cluster_name }}

@@ -2,4 +2,7 @@ git
 
 # CFSSL output contains private keys and must not be committed.
 /cert/etcd/generated/
+
+/kubernetes/master/kubernetes/*
+
 /cert/k8s/master/generated/

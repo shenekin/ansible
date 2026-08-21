@@ -36,6 +36,11 @@ ansible etcd01 -i etcd/inventory.ini -m ansible.builtin.ping
 ```bash
 # Dispaly all groups
  ansible localhost -m debug -a 'var=groups'
+# Poweroff all servers
+ansible all -m shell -a 'poweroff'   
+ansible all -m command -a 'shutdown -h now' -b
+
+
 # Display gathered facts for all etcd hosts.
 ansible etcd -i etcd/inventory.ini -m ansible.builtin.setup
 

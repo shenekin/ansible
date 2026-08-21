@@ -1,0 +1,22 @@
+# Host preparation settings for Kubernetes 1.25.
+
+kubernetes_kernel_modules:
+  - overlay
+  - br_netfilter
+
+kubernetes_host_packages:
+  - ca-certificates
+  - conntrack
+  - curl
+  - ebtables
+  - ethtool
+  - iproute2
+  - iptables
+  - kmod
+  - procps
+  - socat
+
+kubernetes_disable_swap: true
+
+# A reboot is not required for sysctl or module changes.
+kubernetes_reboot_after_configuration: false

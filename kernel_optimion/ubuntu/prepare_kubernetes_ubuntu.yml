@@ -1,0 +1,74 @@
+---
+- name: Prepare Ubuntu 24.04 hosts for Kubernetes 1.25
+  hosts: kubernetes_nodes
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Verify the target operating system
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.distribution == "Ubuntu"
+          - ansible_facts.distribution_major_version == "24"
+        fail_msg: >-
+          This playbook is intended for Ubuntu 24.04. The detected host is
+          {{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }}.
+
+  tasks:
+    - name: Install Kubernetes host prerequisite packages
+      ansible.builtin.apt:
+        name: "{{ kubernetes_host_packages }}"
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Load required Kubernetes kernel modules
+      ansible.builtin.command: "modprobe {{ item }}"
+      loop: "{{ kubernetes_kernel_modules }}"
+      changed_when: false
+
+    - name: Persist required Kubernetes kernel modules
+      ansible.builtin.template:
+        src: modules-load.conf.j2
+        dest: /etc/modules-load.d/kubernetes.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Disable all active swap devices immediately
+      ansible.builtin.command: swapoff --all
+      when:
+        - kubernetes_disable_swap | bool
+        - ansible_facts.swaptotal_mb | int > 0
+      changed_when: true
+
+    - name: Disable configured swap entries after reboot
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^(\\s*[^#]\\S+\\s+\\S+\\s+swap\\s+.*)$'
+        replace: '# \\1'
+        backup: true
+      when: kubernetes_disable_swap | bool
+
+    - name: Configure Kubernetes networking sysctls
+      ansible.builtin.template:
+        src: 99-kubernetes.conf.j2
+        dest: /etc/sysctl.d/99-kubernetes.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Apply Kubernetes sysctl settings
+
+    - name: Flush handlers before optional reboot
+      ansible.builtin.meta: flush_handlers
+
+    - name: Reboot hosts when explicitly requested
+      ansible.builtin.reboot:
+        msg: Reboot requested by kubernetes_reboot_after_configuration
+        reboot_timeout: 600
+      when: kubernetes_reboot_after_configuration | bool
+
+  handlers:
+    - name: Apply Kubernetes sysctl settings
+      ansible.builtin.command: sysctl --system
+      changed_when: true

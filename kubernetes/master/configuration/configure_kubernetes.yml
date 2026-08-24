@@ -1,0 +1,151 @@
+---
+- name: Generate Kubernetes client and bootstrap configuration
+  hosts: "{{ groups['kube_control_plane'][0] }}"
+  connection: local
+  gather_facts: false
+  vars:
+    configuration_output: "{{ kubernetes_configuration_output | default(playbook_dir + '/generated') }}"
+    certificate_source: "{{ kubernetes_cert_source | default(playbook_dir + '/../../../cert/k8s/master/generated') }}"
+    kubectl_binary: "{{ kubernetes_kubectl_binary | default(playbook_dir + '/../kubernetes/server/bin/kubectl') }}"
+    api_server: "https://{{ kubernetes_api_server_address }}:{{ kubernetes_api_server_port }}"
+    bootstrap_token: "{{ kubernetes_token_id }}.{{ kubernetes_token_secret }}"
+    kubeconfig_definitions:
+      - { name: admin, user: admin, certificate: admin.pem, key: admin-key.pem, source: "{{ certificate_source }}", context: "admin@{{ kubernetes_cluster_name }}" }
+      - { name: kube-proxy, user: system:kube-proxy, certificate: kube-proxy.pem, key: kube-proxy-key.pem, source: "{{ configuration_output }}", context: "system:kube-proxy@{{ kubernetes_cluster_name }}" }
+
+  pre_tasks:
+    - name: Validate required variables
+      ansible.builtin.assert:
+        that:
+          - kubernetes_api_server_address is defined
+          - kubernetes_api_server_port is defined
+          - kubernetes_cluster_name is defined
+          - kubernetes_token_id is defined
+          - kubernetes_token_secret is defined
+          - kubernetes_token_id is match('^[a-z0-9]{6}$')
+          - kubernetes_token_secret is match('^[a-z0-9]{16}$')
+        fail_msg: "Set a six-character token id and sixteen-character lowercase token secret in inventory.ini."
+
+    - name: Check required certificate files
+      ansible.builtin.stat:
+        path: "{{ certificate_source }}/{{ item }}"
+      loop: [ca.pem, ca-key.pem, admin.pem, admin-key.pem]
+      register: required_certificates
+
+    - name: Stop when a required certificate is missing
+      ansible.builtin.assert:
+        that: item.stat.exists
+        fail_msg: "Missing certificate: {{ item.item }}"
+      loop: "{{ required_certificates.results }}"
+
+    - name: Check for cfssl
+      ansible.builtin.shell: command -v cfssl
+      changed_when: false
+
+    - name: Check for cfssljson
+      ansible.builtin.shell: command -v cfssljson
+      changed_when: false
+
+    - name: Check for kubectl binary
+      ansible.builtin.stat:
+        path: "{{ kubectl_binary }}"
+      register: kubectl_file
+
+    - name: Stop when kubectl is unavailable
+      ansible.builtin.assert:
+        that:
+          - kubectl_file.stat.exists
+          - kubectl_file.stat.executable
+        fail_msg: "kubectl was not found or is not executable: {{ kubectl_binary }}"
+
+  tasks:
+    - name: Create local configuration directory
+      ansible.builtin.file:
+        path: "{{ configuration_output }}"
+        state: directory
+        mode: '0700'
+
+    - name: Create kube-proxy certificate request
+      ansible.builtin.copy:
+        dest: "{{ configuration_output }}/kube-proxy-csr.json"
+        mode: '0600'
+        content: "{{ {'CN': 'system:kube-proxy', 'hosts': [], 'key': {'algo': 'rsa', 'size': 2048}, 'names': [{'C': 'CN', 'ST': 'Sichuan', 'L': 'Chengdu', 'O': 'Kubernetes', 'OU': 'System Component'}]} | to_nice_json }}\n"
+
+    - name: Generate kube-proxy client certificate
+      ansible.builtin.shell: >-
+        cfssl gencert -ca={{ certificate_source }}/ca.pem
+        -ca-key={{ certificate_source }}/ca-key.pem
+        -config={{ certificate_source }}/ca-config.json -profile=kubernetes
+        {{ configuration_output }}/kube-proxy-csr.json |
+        cfssljson -bare {{ configuration_output }}/kube-proxy
+      args:
+        creates: "{{ configuration_output }}/kube-proxy.pem"
+      no_log: true
+
+    - name: Generate kubeconfig files
+      ansible.builtin.template:
+        src: kubeconfig.j2
+        dest: "{{ configuration_output }}/{{ item.name }}.conf"
+        mode: '0600'
+      loop: "{{ kubeconfig_definitions }}"
+
+    - name: Generate kubelet bootstrap kubeconfig
+      ansible.builtin.template:
+        src: bootstrap-kubeconfig.j2
+        dest: "{{ configuration_output }}/kubelet-bootstrap.conf"
+        mode: '0600'
+
+    - name: Write bootstrap token authentication file
+      ansible.builtin.copy:
+        dest: "{{ configuration_output }}/known_tokens.csv"
+        mode: '0600'
+        content: "{{ kubernetes_token_id }},{{ kubernetes_token_secret }},{{ kubernetes_kubelet_bootstrap_username }},{{ kubernetes_kubelet_bootstrap_group }}\n"
+
+    - name: Render bootstrap RBAC policy
+      ansible.builtin.template:
+        src: bootstrap-rbac.yml.j2
+        dest: "{{ configuration_output }}/bootstrap-rbac.yml"
+        mode: '0600'
+
+    - name: Wait for API server and etcd readiness
+      ansible.builtin.command:
+        argv: ["{{ kubectl_binary }}", "--kubeconfig={{ configuration_output }}/admin.conf", get, --raw=/readyz]
+      register: api_readiness
+      changed_when: false
+      until: api_readiness.rc == 0
+      retries: 12
+      delay: 5
+
+    - name: Apply bootstrap RBAC and CSR auto-approval
+      ansible.builtin.command:
+        argv: ["{{ kubectl_binary }}", "--kubeconfig={{ configuration_output }}/admin.conf", apply, -f, "{{ configuration_output }}/bootstrap-rbac.yml"]
+      register: rbac_apply
+      changed_when: "'configured' in rbac_apply.stdout or 'created' in rbac_apply.stdout"
+      until: rbac_apply.rc == 0
+      retries: 5
+      delay: 10
+
+- name: Install bootstrap token file on control-plane hosts
+  hosts: kube_control_plane
+  serial: 1
+  become: true
+  gather_facts: false
+  vars:
+    configuration_output: "{{ kubernetes_configuration_output | default(playbook_dir + '/generated') }}"
+  tasks:
+    - name: Install API server bootstrap token file
+      ansible.builtin.raw: >-
+        tmp_file=$(mktemp /tmp/known_tokens.XXXXXX) &&
+        printf '%s' '{{ lookup('ansible.builtin.file', configuration_output + '/known_tokens.csv') | b64encode }}' |
+        base64 -d > "$tmp_file" &&
+        if cmp -s "$tmp_file" /etc/kubernetes/known_tokens.csv; then
+          rm -f "$tmp_file"; printf 'ok\n';
+        else
+          install -o root -g root -m 0600 "$tmp_file" /etc/kubernetes/known_tokens.csv;
+          rm -f "$tmp_file"; printf 'changed\n';
+        fi
+      register: bootstrap_token_install
+      changed_when: "'changed' in bootstrap_token_install.stdout"
+      until: bootstrap_token_install.rc == 0
+      retries: 3
+      delay: 10

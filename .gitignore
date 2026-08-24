@@ -4,5 +4,5 @@ git
 /cert/etcd/generated/
 
 /kubernetes/master/kubernetes/*
-
+kubernetes/master/configuration/generated/
 /cert/k8s/master/generated/

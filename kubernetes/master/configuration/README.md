@@ -41,6 +41,26 @@ Copy `generated/kubelet-bootstrap.conf` to `/etc/kubernetes/bootstrap-kubelet.co
 
 Copy `generated/kube-proxy.conf` to `/etc/kubernetes/kube-proxy.conf` on every node for kube-proxy to use.
 
+# how to connect to k8s
+
+#old version
+mv ~/.kube/config ~/.kube/config.bak
+#new version
+kubectl config set-cluster kubernetes \
+  --certificate-authority=/etc/kubernetes/ca.pem \
+  --server=https://10.168.2.188:6443 \
+  --embed-certs=true
+
+kubectl config set-credentials admin \
+  --client-certificate=/etc/kubernetes/admin.pem\
+  --client-key=/etc/kubernetes/admin-key.pem \
+  --embed-certs=true
+
+kubectl config set-context kubernetes \
+  --cluster=kubernetes \
+  --user=admin
+
+kubectl config use-context kubernetes
 ## Security Notes
 
 `generated/` contains private keys and the bootstrap token with `0700/0600` permissions. Do not commit it to Git or transfer it publicly. After changing the token, rerun the playbook and restart all API servers.

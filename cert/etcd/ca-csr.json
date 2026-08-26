@@ -1,16 +1,16 @@
 {
-  "CN": "etcd-cluster-ca",
+  "CN": "etcd-ca",
   "key": {
     "algo": "rsa",
     "size": 4096
   },
   "names": [
     {
-      "C": "Asia",
-      "ST": "China",
-      "L": "Chendu",
+      "C": "CN",
+      "ST": "Sichuan",
+      "L": "Chengdu",
       "O": "etcd",
-      "OU": "etcd-cluster"
+      "OU": "Cluster"
     }
   ]
 }

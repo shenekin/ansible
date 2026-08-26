@@ -1,18 +1,19 @@
 # etcd Mutual TLS Certificates with CFSSL
 
-This directory contains an English-only Ansible playbook that installs the already-generated mutual TLS certificates for the existing three-node etcd 3.5 cluster. The playbook does not generate or renew certificates.
+This directory contains English-only Ansible playbooks for generating and installing mutual TLS certificates for the existing three-node etcd 3.5 cluster.
 
 ## Cluster Nodes
 
-- `etcd01`: `10.168.2.100`
-- `etcd02`: `10.168.2.101`
-- `etcd03`: `10.168.2.102`
+- `etcd01`: `10.168.2.108`
+- `etcd02`: `10.168.2.109`
+- `etcd03`: `10.168.2.110`
 
 The generated node certificates include each node name and IP address as SANs. They support both server authentication and client authentication for etcd peer and client connections.
 
 ## Files
 
 - `issue_etcd_certificates.yml`: Installs the existing generated certificates and replaces the etcd systemd unit on the etcd nodes.
+- `generate_etcd_certificates.yml`: Generates the CA and node certificates locally with CFSSL.
 - `inventory.ini`: The scalable etcd server list and the certificate name assigned to each server.
 - `ca-config.json`: CFSSL signing profile with a one-year validity period.
 - `ca-csr.json`: Certificate authority request definition.
@@ -21,14 +22,21 @@ The generated node certificates include each node name and IP address as SANs. T
 
 ## Prerequisites
 
-The following files must already exist under `generated/`:
+Install CFSSL and OpenSSL on the Ansible control machine:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y golang-cfssl openssl
+```
+
+The generation playbook creates these files under `generated/`:
 
 - `ca.pem`
 - `etcd01.pem` and `etcd01-key.pem`
 - `etcd02.pem` and `etcd02-key.pem`
 - `etcd03.pem` and `etcd03-key.pem`
 
-The playbook validates each certificate against the IP address in the inventory before copying it. It does not require CFSSL.
+The installation playbook validates each certificate against the IP address in the inventory before copying it.
 
 Verify SSH access to all etcd nodes and review the dedicated inventory:
 
@@ -51,13 +59,21 @@ generated/etcd04.pem
 generated/etcd04-key.pem
 ```
 
-## Run the Playbook
+## Generate and Install
 
 Use the dedicated etcd inventory:
 
 ```bash
 cd /root/ansible-playbook/cert/etcd
 source ~/ansible-core/bin/activate
+ansible-playbook --syntax-check \
+  -i inventory.ini \
+  generate_etcd_certificates.yml
+
+ansible-playbook \
+  -i inventory.ini \
+  generate_etcd_certificates.yml
+
 ansible-playbook --syntax-check \
   -i inventory.ini \
   issue_etcd_certificates.yml
@@ -69,7 +85,7 @@ ansible-playbook \
 
 The playbook performs these steps:
 
-1. Reads the existing files from `generated/` without generating new certificates.
+1. Generates the CA and node certificates locally from the inventory.
 2. Maps every inventory host to its configured `etcd_name` and matching certificate files.
 3. Replaces the CA, node certificate, and node private key under `/etc/etcd/pki`.
 4. Generates the HTTPS initial-cluster member list from the inventory.
@@ -84,7 +100,7 @@ Run the following command from an etcd node after deployment:
 
 ```bash
 ETCDCTL_API=3 /usr/local/bin/etcdctl \
-  --endpoints=https://10.168.2.100:2379,https://10.168.2.101:2379,https://10.168.2.102:2379 \
+  --endpoints=https://10.168.2.108:2379,https://10.168.2.109:2379,https://10.168.2.110:2379 \
   --cacert=/etc/etcd/pki/ca.pem \
   --cert=/etc/etcd/pki/server.pem \
   --key=/etc/etcd/pki/server-key.pem \
@@ -98,7 +114,7 @@ systemctl status etcd
 journalctl -u etcd -n 50 --no-pager
 ```
 # Check etcd cluster status
-source ~/ansible-core/bin/activate && ansible etcd01 -i inventory.ini -b -m ansible.builtin.shell -a 'ETCDCTL_API=3 /usr/local/bin/etcdctl --endpoints=https://10.168.2.100:2379,https://10.168.2.101:2379,https://10.168.2.102:2379 --cacert=/etc/etcd/pki/ca.pem --cert=/etc/etcd/pki/server.pem --key=/etc/etcd/pki/server-key.pem endpoint status -w table'
+source ~/ansible-core/bin/activate && ansible etcd01 -i inventory.ini -b -m ansible.builtin.shell -a 'ETCDCTL_API=3 /usr/local/bin/etcdctl --endpoints=https://10.168.2.108:2379,https://10.168.2.109:2379,https://10.168.2.110:2379 --cacert=/etc/etcd/pki/ca.pem --cert=/etc/etcd/pki/server.pem --key=/etc/etcd/pki/server-key.pem endpoint status -w table'
 ## Important Warning
 
 Do not run this playbook against a production etcd cluster without a maintenance plan. It changes client and peer endpoints from HTTP to HTTPS and restarts etcd. Keep a backup of the existing etcd data and configuration before deployment.

@@ -18,12 +18,15 @@
         state: present
         update_cache: true
         cache_valid_time: 3600
-      when: ansible_facts.os_family == "Debian"
+      when:
+        - etcd_task_install_required_packages_enabled | default(true) | bool
+        - ansible_facts.os_family == "Debian"
 
     - name: Create etcd group
       ansible.builtin.group:
         name: etcd
         state: present
+      when: etcd_task_create_etcd_group_enabled | default(true) | bool
 
     - name: Create etcd user
       ansible.builtin.user:
@@ -33,6 +36,7 @@
         shell: /usr/sbin/nologin
         home: /var/lib/etcd
         create_home: false
+      when: etcd_task_create_etcd_user_enabled | default(true) | bool
 
     - name: Create etcd directories
       ansible.builtin.file:
@@ -44,6 +48,7 @@
       loop:
         - "{{ etcd_install_dir }}"
         - "{{ etcd_data_dir }}"
+      when: etcd_task_create_etcd_directories_enabled | default(true) | bool
 
     - name: Download etcd archive
       ansible.builtin.get_url:
@@ -51,6 +56,7 @@
         dest: "/tmp/etcd-v{{ etcd_version }}-linux-amd64.tar.gz"
         mode: "0644"
         checksum: "{{ ('sha256:' + etcd_sha256) if etcd_sha256 is defined else omit }}"
+      when: etcd_task_download_etcd_archive_enabled | default(false) | bool
 
     - name: Extract etcd archive
       ansible.builtin.unarchive:
@@ -58,6 +64,7 @@
         dest: "/opt"
         remote_src: true
         creates: "/opt/etcd-v{{ etcd_version }}-linux-amd64/etcd"
+      when: etcd_task_extract_etcd_archive_enabled | default(true) | bool
 
     - name: Install etcd binaries
       ansible.builtin.copy:
@@ -71,6 +78,7 @@
         - etcd
         - etcdctl
         - etcdutl
+      when: etcd_task_install_etcd_binaries_enabled | default(true) | bool
       notify: Restart etcd
 
     - name: Deploy etcd systemd unit
@@ -80,6 +88,7 @@
         owner: root
         group: root
         mode: "0644"
+      when: etcd_task_deploy_etcd_systemd_unit_enabled | default(true) | bool
       notify:
         - Reload systemd
         - Restart etcd
@@ -90,13 +99,16 @@
         enabled: true
         state: started
         daemon_reload: true
+      when: etcd_task_enable_and_start_etcd_enabled | default(true) | bool
 
   handlers:
     - name: Reload systemd
       ansible.builtin.systemd:
         daemon_reload: true
+      when: etcd_handler_reload_systemd_enabled | default(true) | bool
 
     - name: Restart etcd
       ansible.builtin.systemd:
         name: etcd
         state: restarted
+      when: etcd_handler_restart_etcd_enabled | default(true) | bool

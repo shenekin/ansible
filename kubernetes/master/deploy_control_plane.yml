@@ -1,5 +1,5 @@
 ---
-- name: Deploy Kubernetes 1.25 control plane binaries and services
+- name: Deploy Kubernetes 1.25.16 control plane binaries and services
   hosts: kube_control_plane
   become: true
   gather_facts: true
@@ -11,6 +11,7 @@
     kubernetes_install_dir: "/opt/kubernetes-{{ kubernetes_version }}"
     kubernetes_binary_dir: "/usr/local/bin"
     kubernetes_config_dir: "/etc/kubernetes"
+    kubernetes_admission_config_source: "{{ playbook_dir }}/admission-config.yaml"
     kubernetes_pki_dir: "/etc/kubernetes/pki"
     kubernetes_manifest_dir: "/etc/kubernetes/manifests"
     kubernetes_runtime_dir: "/var/lib/kubelet"
@@ -267,6 +268,15 @@
         owner: root
         group: root
         mode: '0600'
+      notify: Restart Kubernetes control plane
+
+    - name: Install API server admission configuration
+      ansible.builtin.copy:
+        src: "{{ kubernetes_admission_config_source }}"
+        dest: "{{ kubernetes_admission_config_path }}"
+        owner: root
+        group: root
+        mode: '0644'
       notify: Restart Kubernetes control plane
 
     - name: Install API server systemd unit

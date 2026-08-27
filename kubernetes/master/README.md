@@ -97,6 +97,38 @@ ansible-playbook -i inventory.ini deploy_control_plane.yml
 
 The playbook downloads the archive once to the control machine, extracts it locally, copies the four binaries and certificate files to all control-plane hosts, creates systemd units, enables the services, starts them, and asserts that all three services are active.
 
+## API Server Admission Configuration
+
+The repository contains `admission-config.yaml` in this directory. The control-plane playbook copies it to every control-plane host as:
+
+```text
+/etc/kubernetes/admission-config.yaml
+```
+
+The `kube-apiserver.service` unit references this file with:
+
+```text
+--admission-control-config-file=/etc/kubernetes/admission-config.yaml
+```
+
+The configuration uses the `baseline` policy by default and exempts `kube-system`, which is required for privileged Calico system pods. Run the control-plane playbook to distribute the file, update the service units, and restart the API servers:
+
+```bash
+cd /root/ansible-playbook/kubernetes/master
+source ~/ansible-core/bin/activate
+ansible-playbook --syntax-check -i inventory.ini deploy_control_plane.yml
+ansible-playbook -i inventory.ini deploy_control_plane.yml
+```
+
+Verify the rollout on every control-plane host:
+
+```bash
+ansible kube_control_plane -i inventory.ini -b -m ansible.builtin.stat \
+	-a 'path=/etc/kubernetes/admission-config.yaml'
+ansible kube_control_plane -i inventory.ini -b -m ansible.builtin.command \
+	-a "grep admission-control-config-file /etc/systemd/system/kube-apiserver.service"
+```
+
 Before deploying Kubernetes, ensure the etcd certificate generation and installation playbook has completed successfully:
 
 ```bash

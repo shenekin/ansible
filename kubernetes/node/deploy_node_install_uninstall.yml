@@ -1,0 +1,318 @@
+---
+- name: Install or uninstall Kubernetes node components
+  hosts: kubernetes_node
+  become: true
+  gather_facts: true
+
+  vars:
+    kubelet_url: "{{ kubernetes_download_mirror }}/dl.k8s.io/release/v{{ kubelet_version }}/bin/linux/{{ kubernetes_arch }}/kubelet"
+    kube_proxy_url: "{{ kubernetes_download_mirror }}/dl.k8s.io/release/v{{ kube_proxy_version }}/bin/linux/{{ kubernetes_arch }}/kube-proxy"
+    calico_archive_url: "{{ calico_release_mirror }}/github.com/projectcalico/calico/releases/download/v{{ calico_version }}/release-v{{ calico_version }}.tgz"
+    calico_archive: "/tmp/calico-v{{ calico_version }}.tgz"
+
+  pre_tasks:
+    - name: Validate node action
+      ansible.builtin.assert:
+        that: node_install_uninstall_action | lower in ['install', 'uninstall']
+        fail_msg: "node_install_uninstall_action must be install or uninstall."
+
+    - name: Verify supported node platform
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.os_family == 'Debian'
+          - ansible_facts.architecture == 'x86_64'
+        fail_msg: "This playbook supports Debian-family amd64 hosts only."
+
+  tasks:
+    - name: Install Kubernetes node components
+      block:
+        - name: Install node dependencies
+          ansible.builtin.apt:
+            name:
+              - ca-certificates
+              - conntrack
+              - ebtables
+              - ethtool
+              - ipset
+              - iptables
+              - socat
+              - tar
+            state: present
+            update_cache: true
+            cache_valid_time: 3600
+
+        - name: Create node directories
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: directory
+            owner: root
+            group: root
+            mode: '0755'
+          loop:
+            - "{{ kubernetes_binary_dir }}"
+            - "{{ kubernetes_config_dir }}"
+            - "{{ cni_binary_dir }}"
+            - "{{ cni_config_dir }}"
+            - "{{ kubernetes_node_data_dir }}"
+
+        - name: Download kubelet
+          ansible.builtin.get_url:
+            url: "{{ kubelet_url }}"
+            dest: "{{ kubernetes_binary_dir }}/kubelet"
+            mode: '0755'
+
+        - name: Download kube-proxy
+          ansible.builtin.get_url:
+            url: "{{ kube_proxy_url }}"
+            dest: "{{ kubernetes_binary_dir }}/kube-proxy"
+            mode: '0755'
+
+        - name: Download Calico release to the Ansible control machine
+          ansible.builtin.get_url:
+            url: "{{ calico_archive_url }}"
+            dest: "{{ calico_archive_control_path }}"
+            mode: '0644'
+            timeout: 60
+          delegate_to: localhost
+          become: false
+          run_once: true
+
+        - name: Copy Calico release to every Kubernetes node
+          ansible.builtin.copy:
+            src: "{{ calico_archive_control_path }}"
+            dest: "{{ calico_archive_node_path }}"
+            owner: root
+            group: root
+            mode: '0644'
+
+        - name: Extract Calico release
+          ansible.builtin.unarchive:
+            src: "{{ calico_archive_node_path }}"
+            dest: /tmp
+            remote_src: true
+            creates: "/tmp/release-v{{ calico_version }}"
+
+        - name: Install Calico CNI binaries
+          ansible.builtin.copy:
+            src: "/tmp/release-v{{ calico_version }}/bin/cni/amd64/{{ item }}"
+            dest: "{{ cni_binary_dir }}/{{ item }}"
+            remote_src: true
+            owner: root
+            group: root
+            mode: '0755'
+          loop:
+            - calico
+            - calico-ipam
+            - install
+            - host-local
+            - loopback
+            - portmap
+            - bandwidth
+            - tuning
+
+        - name: Install calicoctl
+          ansible.builtin.copy:
+            src: "/tmp/release-v{{ calico_version }}/bin/calicoctl/calicoctl-linux-amd64"
+            dest: "{{ kubernetes_binary_dir }}/calicoctl"
+            remote_src: true
+            owner: root
+            group: root
+            mode: '0755'
+
+        - name: Install kube-proxy kubeconfig
+          ansible.builtin.copy:
+            src: "{{ kube_proxy_kubeconfig_source }}"
+            dest: "{{ kube_proxy_kubeconfig }}"
+            owner: root
+            group: root
+            mode: '0600'
+
+        - name: Install kubelet bootstrap kubeconfig
+          ansible.builtin.copy:
+            src: "{{ kubelet_bootstrap_kubeconfig_source }}"
+            dest: "{{ kubelet_bootstrap_kubeconfig }}"
+            owner: root
+            group: root
+            mode: '0600'
+
+        - name: Write kubelet configuration
+          ansible.builtin.copy:
+            dest: "{{ kubelet_config_path }}"
+            owner: root
+            group: root
+            mode: '0644'
+            content: |
+              apiVersion: kubelet.config.k8s.io/v1beta1
+              kind: KubeletConfiguration
+              cgroupDriver: systemd
+              containerRuntimeEndpoint: {{ containerd_socket }}
+              clusterDNS:
+                - 10.96.0.10
+              clusterDomain: cluster.local
+              resolvConf: /run/systemd/resolve/resolv.conf
+
+        - name: Install kubelet systemd unit
+          ansible.builtin.copy:
+            dest: /etc/systemd/system/kubelet.service
+            owner: root
+            group: root
+            mode: '0644'
+            content: |
+              [Unit]
+              Description=Kubernetes Kubelet
+              Documentation=https://kubernetes.io/docs/
+              Wants=network-online.target
+              After=network-online.target containerd.service
+
+              [Service]
+              ExecStart={{ kubernetes_binary_dir }}/kubelet --config={{ kubelet_config_path }} --kubeconfig={{ kubelet_kubeconfig }} --bootstrap-kubeconfig={{ kubelet_bootstrap_kubeconfig }}
+              Restart=always
+              RestartSec=10
+              Delegate=yes
+              KillMode=process
+
+              [Install]
+              WantedBy=multi-user.target
+          notify: Reload systemd
+
+        - name: Install kube-proxy systemd unit
+          ansible.builtin.copy:
+            dest: /etc/systemd/system/kube-proxy.service
+            owner: root
+            group: root
+            mode: '0644'
+            content: |
+              [Unit]
+              Description=Kubernetes Kube Proxy
+              Wants=network-online.target
+              After=network-online.target containerd.service
+
+              [Service]
+              ExecStart={{ kubernetes_binary_dir }}/kube-proxy --config={{ kubernetes_config_dir }}/kube-proxy.yaml --kubeconfig={{ kube_proxy_kubeconfig }}
+              Restart=always
+              RestartSec=10
+
+              [Install]
+              WantedBy=multi-user.target
+          notify: Reload systemd
+
+        - name: Write kube-proxy configuration
+          ansible.builtin.copy:
+            dest: "{{ kubernetes_config_dir }}/kube-proxy.yaml"
+            owner: root
+            group: root
+            mode: '0644'
+            content: |
+              apiVersion: kubeproxy.config.k8s.io/v1alpha1
+              kind: KubeProxyConfiguration
+              clusterCIDR: {{ kubernetes_cluster_cidr }}
+              mode: iptables
+
+        - name: Enable and start kubelet
+          ansible.builtin.systemd:
+            name: kubelet
+            enabled: true
+            state: started
+            daemon_reload: true
+
+        - name: Enable and start kube-proxy
+          ansible.builtin.systemd:
+            name: kube-proxy
+            enabled: true
+            state: started
+            daemon_reload: true
+      when: node_install_uninstall_action | lower == 'install'
+
+    - name: Download Calico manifest to the Ansible control machine
+      ansible.builtin.get_url:
+        url: "{{ calico_manifest_url }}"
+        dest: "{{ calico_manifest_path }}"
+        mode: '0644'
+      delegate_to: localhost
+      become: false
+      run_once: true
+      when: node_install_uninstall_action | lower == 'install'
+
+    - name: Rewrite Calico images to the configured China registry
+      ansible.builtin.replace:
+        path: "{{ calico_manifest_path }}"
+        regexp: 'docker\.io/calico/'
+        replace: "{{ calico_image_registry }}/{{ calico_image_namespace }}/"
+      delegate_to: localhost
+      become: false
+      run_once: true
+      when: node_install_uninstall_action | lower == 'install'
+
+    - name: Copy Calico manifest to every Kubernetes node
+      ansible.builtin.copy:
+        src: "{{ calico_manifest_path }}"
+        dest: "{{ calico_manifest_node_path }}"
+        owner: root
+        group: root
+        mode: '0644'
+      when: node_install_uninstall_action | lower == 'install'
+
+    - name: Uninstall Kubernetes node components
+      block:
+        - name: Stop and disable node services
+          ansible.builtin.systemd:
+            name: "{{ item }}"
+            state: stopped
+            enabled: false
+          loop:
+            - kubelet
+            - kube-proxy
+          failed_when: false
+
+        - name: Remove node service units
+          ansible.builtin.file:
+            path: "/etc/systemd/system/{{ item }}.service"
+            state: absent
+          loop:
+            - kubelet
+            - kube-proxy
+          notify: Reload systemd
+
+        - name: Remove node binaries and configuration
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ kubernetes_binary_dir }}/kubelet"
+            - "{{ kubernetes_binary_dir }}/kube-proxy"
+            - "{{ kubernetes_binary_dir }}/calicoctl"
+            - "{{ kube_proxy_kubeconfig }}"
+            - "{{ kubelet_bootstrap_kubeconfig }}"
+            - "{{ kubernetes_config_dir }}/kube-proxy.yaml"
+            - "{{ kubelet_config_path }}"
+            - "{{ cni_config_dir }}"
+            - "{{ calico_manifest_node_path }}"
+
+        - name: Remove Calico CNI binaries
+          ansible.builtin.file:
+            path: "{{ cni_binary_dir }}/{{ item }}"
+            state: absent
+          loop:
+            - calico
+            - calico-ipam
+            - install
+            - host-local
+            - loopback
+            - portmap
+            - bandwidth
+            - tuning
+
+        - name: Remove node data when requested
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ kubernetes_node_data_dir }}"
+            - /var/lib/cni
+          when: node_install_uninstall_remove_data | bool
+      when: node_install_uninstall_action | lower == 'uninstall'
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true

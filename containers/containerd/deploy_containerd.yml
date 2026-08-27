@@ -1,0 +1,184 @@
+---
+- name: Install containerd runtime and CRI tools
+  hosts: containerd
+  become: true
+  gather_facts: true
+
+  vars:
+    containerd_archive_url: "{{ download_mirror }}/github.com/containerd/containerd/releases/download/v{{ containerd_version }}/containerd-{{ containerd_version }}-linux-amd64.tar.gz"
+    runc_download_url: "{{ download_mirror }}/github.com/opencontainers/runc/releases/download/v{{ runc_version }}/runc.amd64"
+    crictl_archive_url: "{{ download_mirror }}/github.com/kubernetes-sigs/cri-tools/releases/download/v{{ crictl_version }}/crictl-v{{ crictl_version }}-linux-amd64.tar.gz"
+
+    containerd_archive: "/tmp/containerd-{{ containerd_version }}-linux-amd64.tar.gz"
+    crictl_archive: "/tmp/crictl-v{{ crictl_version }}-linux-amd64.tar.gz"
+  pre_tasks:
+    - name: Validate containerd action
+      ansible.builtin.assert:
+        that:
+          - containerd_action | lower in ['install', 'uninstall']
+        fail_msg: "containerd_action must be install or uninstall."
+
+    - name: Verify supported operating system and architecture
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.os_family == "Debian"
+          - ansible_facts.architecture == "x86_64"
+        fail_msg: "This playbook supports Debian-family amd64 hosts only."
+
+  tasks:
+    - name: Install and configure containerd
+      block:
+        - name: Install containerd prerequisites
+          ansible.builtin.apt:
+            name:
+              - ca-certificates
+              - curl
+              - tar
+            state: present
+            update_cache: true
+            cache_valid_time: 3600
+
+        - name: Create containerd directories
+          ansible.builtin.file:
+            path: "{{ item.path }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "{{ item.mode }}"
+          loop:
+            - { path: "{{ containerd_binary_dir }}", mode: "0755" }
+            - { path: "/etc/containerd", mode: "0755" }
+            - { path: "{{ containerd_data_dir }}", mode: "0755" }
+
+        - name: Download containerd archive
+          ansible.builtin.get_url:
+            url: "{{ containerd_archive_url }}"
+            dest: "{{ containerd_archive }}"
+            mode: "0644"
+
+        - name: Install containerd binaries
+          ansible.builtin.unarchive:
+            src: "{{ containerd_archive }}"
+            dest: "{{ containerd_install_prefix }}"
+            remote_src: true
+            creates: "{{ containerd_binary_dir }}/containerd"
+          notify: Restart containerd
+
+        - name: Download runc
+          ansible.builtin.get_url:
+            url: "{{ runc_download_url }}"
+            dest: "{{ containerd_runc_path }}"
+            mode: "0755"
+
+        - name: Download crictl archive
+          ansible.builtin.get_url:
+            url: "{{ crictl_archive_url }}"
+            dest: "{{ crictl_archive }}"
+            mode: "0644"
+
+        - name: Install crictl
+          ansible.builtin.unarchive:
+            src: "{{ crictl_archive }}"
+            dest: "{{ containerd_binary_dir }}"
+            remote_src: true
+            include:
+              - crictl
+            creates: "{{ containerd_binary_dir }}/crictl"
+
+        - name: Generate containerd configuration
+          ansible.builtin.shell: containerd config default > {{ containerd_config_path }}
+          args:
+            creates: "{{ containerd_config_path }}"
+          notify: Restart containerd
+
+        - name: Configure systemd cgroups for runc
+          ansible.builtin.replace:
+            path: "{{ containerd_config_path }}"
+            regexp: '^\s*SystemdCgroup = false$'
+            replace: '            SystemdCgroup = {{ containerd_configure_systemd_cgroup | lower }}'
+          when: containerd_configure_systemd_cgroup | bool
+          notify: Restart containerd
+
+        - name: Install containerd systemd unit
+          ansible.builtin.get_url:
+            url: "{{ download_mirror }}/github.com/containerd/containerd/raw/v{{ containerd_version }}/containerd.service"
+            dest: "{{ containerd_service_path }}"
+            mode: "0644"
+          notify:
+            - Reload systemd
+            - Restart containerd
+
+        - name: Enable and start containerd
+          ansible.builtin.systemd:
+            name: containerd
+            enabled: true
+            state: started
+            daemon_reload: true
+
+        - name: Verify installed versions
+          ansible.builtin.command: "{{ item.command }}"
+          register: containerd_version_checks
+          changed_when: false
+          loop:
+            - { name: "containerd", command: "/usr/local/bin/containerd --version" }
+            - { name: "runc", command: "/usr/local/sbin/runc --version" }
+            - { name: "crictl", command: "/usr/local/bin/crictl --version" }
+
+        - name: Display installed versions
+          ansible.builtin.debug:
+            msg: "{{ item.item.name }}: {{ item.stdout }}"
+          loop: "{{ containerd_version_checks.results }}"
+      when: containerd_action | lower == 'install'
+
+    - name: Uninstall containerd and CRI tools
+      block:
+        - name: Stop and disable containerd
+          ansible.builtin.systemd:
+            name: containerd
+            state: stopped
+            enabled: false
+          failed_when: false
+
+        - name: Remove containerd service unit
+          ansible.builtin.file:
+            path: "{{ containerd_service_path }}"
+            state: absent
+          notify: Reload systemd
+
+        - name: Remove containerd configuration
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ containerd_config_path }}"
+            - "/etc/containerd"
+
+        - name: Remove installed binaries
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ containerd_binary_dir }}/containerd"
+            - "{{ containerd_binary_dir }}/containerd-shim"
+            - "{{ containerd_binary_dir }}/containerd-shim-runc-v1"
+            - "{{ containerd_binary_dir }}/containerd-shim-runc-v2"
+            - "{{ containerd_binary_dir }}/containerd-stress"
+            - "{{ containerd_binary_dir }}/crictl"
+            - "{{ containerd_runc_path }}"
+
+        - name: Remove containerd data when requested
+          ansible.builtin.file:
+            path: "{{ containerd_data_dir }}"
+            state: absent
+          when: containerd_remove_data | bool
+      when: containerd_action | lower == 'uninstall'
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart containerd
+      ansible.builtin.systemd:
+        name: containerd
+        state: restarted

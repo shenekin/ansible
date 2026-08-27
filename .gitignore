@@ -6,3 +6,4 @@ git
 /kubernetes/master/kubernetes/*
 kubernetes/master/configuration/generated/
 /cert/k8s/master/generated/
+cert/k8s/node/generated

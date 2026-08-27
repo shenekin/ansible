@@ -111,7 +111,7 @@ The `kube-apiserver.service` unit references this file with:
 --admission-control-config-file=/etc/kubernetes/admission-config.yaml
 ```
 
-The configuration uses the `baseline` policy by default and exempts `kube-system`, which is required for privileged Calico system pods. Run the control-plane playbook to distribute the file, update the service units, and restart the API servers:
+The file uses the Kubernetes `AdmissionConfiguration` format required by Kubernetes `v1.25.16`. It configures the `PodSecurity` plugin with the `baseline` policy by default and exempts `kube-system`, which is required for privileged Calico system pods. Run the control-plane playbook to distribute the file, update the service units, and restart the API servers:
 
 ```bash
 cd /root/ansible-playbook/kubernetes/master
@@ -119,6 +119,8 @@ source ~/ansible-core/bin/activate
 ansible-playbook --syntax-check -i inventory.ini deploy_control_plane.yml
 ansible-playbook -i inventory.ini deploy_control_plane.yml
 ```
+
+The configuration playbook also generates `configuration/generated/bootstrap-token.csv` and the control-plane playbook distributes it to `/etc/kubernetes/bootstrap-token.csv` on every control-plane host. The API server enables bootstrap-token Secret authentication with `--enable-bootstrap-token-auth`. Kubernetes v1.25.16 does not support `--bootstrap-token-file`; the existing `--token-auth-file=/etc/kubernetes/known_tokens.csv` remains unchanged.
 
 Verify the rollout on every control-plane host:
 

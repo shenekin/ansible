@@ -1,0 +1,20 @@
+{
+    "CN": "system:node:k8s-master-01",
+    "hosts": [
+        "k8s-master-01",
+        "10.168.2.100"
+    ],
+    "key": {
+        "algo": "rsa",
+        "size": 2048
+    },
+    "names": [
+        {
+            "C": "CN",
+            "L": "Chengdu",
+            "O": "system:nodes",
+            "OU": "Kubernetes Node",
+            "ST": "Sichuan"
+        }
+    ]
+}

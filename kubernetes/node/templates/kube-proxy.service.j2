@@ -1,0 +1,13 @@
+[Unit]
+Description=Kubernetes Kube Proxy
+Documentation=https://kubernetes.io/docs/
+Wants=network-online.target
+After=network-online.target containerd.service
+
+[Service]
+ExecStart={{ kubernetes_binary_dir }}/kube-proxy --config={{ kubernetes_config_dir }}/kube-proxy.yaml --kubeconfig={{ kube_proxy_kubeconfig }}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

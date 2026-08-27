@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Config
+clusters:
+  - name: {{ kubernetes_cluster_name }}
+    cluster:
+      server: https://{{ kubernetes_api_server_address }}:{{ kubernetes_api_server_port }}
+      certificate-authority: {{ kubernetes_node_ca_path }}
+users:
+  - name: system:kube-proxy
+    user:
+      client-certificate: {{ kubernetes_node_kube_proxy_cert_path }}
+      client-key: {{ kubernetes_node_kube_proxy_key_path }}
+contexts:
+  - name: system:kube-proxy@{{ kubernetes_cluster_name }}
+    context:
+      cluster: {{ kubernetes_cluster_name }}
+      user: system:kube-proxy
+current-context: system:kube-proxy@{{ kubernetes_cluster_name }}

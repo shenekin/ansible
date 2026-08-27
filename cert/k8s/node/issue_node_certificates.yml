@@ -1,0 +1,144 @@
+---
+- name: Generate Kubernetes worker certificates locally
+  hosts: kube_node
+  connection: local
+  gather_facts: false
+  vars:
+    cert_output_dir: "{{ kubernetes_node_cert_output }}/{{ inventory_hostname }}"
+    ca_config_file: "{{ kubernetes_ca_source }}/ca-config.json"
+    ca_certificate: "{{ kubernetes_ca_source }}/ca.pem"
+    ca_private_key: "{{ kubernetes_ca_source }}/ca-key.pem"
+    certificate_requests:
+      - name: kubelet
+        cn: "system:node:{{ inventory_hostname }}"
+        organization: system:nodes
+        hosts:
+          - "{{ inventory_hostname }}"
+          - "{{ ansible_host }}"
+      - name: kube-proxy
+        cn: system:kube-proxy
+        organization: system:node-proxier
+        hosts: []
+
+  pre_tasks:
+    - name: Validate required inventory values
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname is defined
+          - ansible_host is defined
+          - kubernetes_ca_source is defined
+          - kubernetes_api_server_address is defined
+          - kubernetes_api_server_port is defined
+        fail_msg: "Define worker host, ansible_host, CA source, and API server settings in inventory.ini."
+
+    - name: Check required CA files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      delegate_to: localhost
+      register: ca_files
+      loop:
+        - "{{ ca_certificate }}"
+        - "{{ ca_private_key }}"
+        - "{{ ca_config_file }}"
+
+    - name: Stop when a required CA file is missing
+      ansible.builtin.assert:
+        that: item.stat.exists
+        fail_msg: "Missing CA file: {{ item.item }}"
+      loop: "{{ ca_files.results }}"
+
+    - name: Check for cfssl
+      ansible.builtin.shell: command -v cfssl
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Check for cfssljson
+      ansible.builtin.shell: command -v cfssljson
+      delegate_to: localhost
+      changed_when: false
+
+  tasks:
+    - name: Create worker certificate output directory
+      ansible.builtin.file:
+        path: "{{ cert_output_dir }}"
+        state: directory
+        mode: '0700'
+      delegate_to: localhost
+
+    - name: Create worker certificate signing requests
+      ansible.builtin.copy:
+        dest: "{{ cert_output_dir }}/{{ item.name }}-csr.json"
+        mode: '0600'
+        content: "{{ {'CN': item.cn, 'hosts': item.hosts, 'key': {'algo': 'rsa', 'size': 2048}, 'names': [{'C': 'CN', 'ST': 'Sichuan', 'L': 'Chengdu', 'O': item.organization, 'OU': 'Kubernetes Node'}]} | to_nice_json }}\n"
+      loop: "{{ certificate_requests }}"
+      delegate_to: localhost
+
+    - name: Generate worker certificates
+      ansible.builtin.shell: |
+        cfssl gencert \
+          -ca={{ ca_certificate }} \
+          -ca-key={{ ca_private_key }} \
+          -config={{ ca_config_file }} \
+          -profile=kubernetes \
+          {{ item.name }}-csr.json | \
+          cfssljson -bare {{ item.name }}
+      args:
+        chdir: "{{ cert_output_dir }}"
+        creates: "{{ cert_output_dir }}/{{ item.name }}.pem"
+      loop: "{{ certificate_requests }}"
+      delegate_to: localhost
+      no_log: true
+
+    - name: Create the remote Kubernetes PKI directory
+      ansible.builtin.file:
+        path: "{{ kubernetes_node_cert_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+      delegate_to: "{{ inventory_hostname }}"
+
+    - name: Copy the cluster CA certificate to each worker
+      ansible.builtin.copy:
+        src: "{{ ca_certificate }}"
+        dest: "{{ kubernetes_node_ca_path }}"
+        owner: root
+        group: root
+        mode: '0644'
+      delegate_to: "{{ inventory_hostname }}"
+
+    - name: Distribute the worker kubelet certificate
+      ansible.builtin.copy:
+        src: "{{ cert_output_dir }}/kubelet.pem"
+        dest: "{{ kubernetes_node_kubelet_cert_path }}"
+        owner: root
+        group: root
+        mode: '0600'
+      delegate_to: "{{ inventory_hostname }}"
+
+    - name: Distribute the worker kubelet key
+      ansible.builtin.copy:
+        src: "{{ cert_output_dir }}/kubelet-key.pem"
+        dest: "{{ kubernetes_node_kubelet_key_path }}"
+        owner: root
+        group: root
+        mode: '0600'
+      delegate_to: "{{ inventory_hostname }}"
+
+    - name: Distribute the kube-proxy certificate
+      ansible.builtin.copy:
+        src: "{{ cert_output_dir }}/kube-proxy.pem"
+        dest: "{{ kubernetes_node_kube_proxy_cert_path }}"
+        owner: root
+        group: root
+        mode: '0600'
+      delegate_to: "{{ inventory_hostname }}"
+
+    - name: Distribute the kube-proxy key
+      ansible.builtin.copy:
+        src: "{{ cert_output_dir }}/kube-proxy-key.pem"
+        dest: "{{ kubernetes_node_kube_proxy_key_path }}"
+        owner: root
+        group: root
+        mode: '0600'
+      delegate_to: "{{ inventory_hostname }}"

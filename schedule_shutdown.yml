@@ -5,7 +5,7 @@
     - name: Add cron job for daily shutdown at 23:00
       ansible.builtin.cron:
         name: "daily shutdown"
-        minute: "55"
+        minute: "23"
         hour: "17"
         job: "/usr/sbin/poweroff"
         user: root

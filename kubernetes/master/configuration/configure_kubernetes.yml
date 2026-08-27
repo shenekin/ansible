@@ -101,6 +101,12 @@
         mode: '0600'
         content: "{{ kubernetes_token_id }},{{ kubernetes_token_secret }},{{ kubernetes_kubelet_bootstrap_username }},{{ kubernetes_kubelet_bootstrap_group }}\n"
 
+    - name: Write bootstrap token record
+      ansible.builtin.copy:
+        dest: "{{ configuration_output }}/bootstrap-token.csv"
+        mode: '0600'
+        content: "{{ kubernetes_token_id }},{{ kubernetes_token_secret }},{{ kubernetes_kubelet_bootstrap_username }},{{ kubernetes_kubelet_bootstrap_group }}\n"
+
     - name: Render bootstrap RBAC policy
       ansible.builtin.template:
         src: bootstrap-rbac.yml.j2
@@ -149,3 +155,11 @@
       until: bootstrap_token_install.rc == 0
       retries: 3
       delay: 10
+
+    - name: Install bootstrap token record on control-plane hosts
+      ansible.builtin.copy:
+        src: "{{ configuration_output }}/bootstrap-token.csv"
+        dest: "{{ kubernetes_bootstrap_token_file }}"
+        owner: root
+        group: root
+        mode: '0600'

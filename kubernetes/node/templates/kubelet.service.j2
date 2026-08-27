@@ -1,0 +1,23 @@
+[Unit]
+Description=Kubernetes Kubelet
+Documentation=https://kubernetes.io/docs/
+Wants=network-online.target containerd.service
+After=network-online.target containerd.service
+
+[Service]
+ExecStart={{ kubernetes_binary_dir }}/kubelet \
+	--kubeconfig={{ kubelet_kubeconfig }} \
+	--container-runtime-endpoint={{ containerd_socket }} \
+	--cgroup-driver=systemd \
+	--cluster-dns=10.96.0.10 \
+	--cluster-domain=cluster.local \
+	--resolv-conf=/run/systemd/resolve/resolv.conf \
+	--serialize-image-pulls=false
+Restart=always
+RestartSec=10
+Delegate=yes
+KillMode=process
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

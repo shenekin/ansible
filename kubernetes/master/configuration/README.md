@@ -6,6 +6,7 @@ This directory generates Kubernetes client configuration and enables TLS bootstr
 - `kube-proxy.conf`: kube-proxy kubeconfig using the `system:kube-proxy` client certificate.
 - `kubelet-bootstrap.conf`: Initial kubelet kubeconfig using the bootstrap token.
 - `known_tokens.csv`: Bootstrap token file for the API server.
+- `bootstrap-token.csv`: Bootstrap token record generated for control-plane distribution.
 - `bootstrap-rbac.yml`: RBAC rules that allow kubelet CSRs and automatically approve node client certificates and renewals.
 
 ## Prerequisites
@@ -31,7 +32,7 @@ ansible-playbook --syntax-check -i inventory.ini configure_kubernetes.yml
 ansible-playbook -i inventory.ini configure_kubernetes.yml
 ```
 
-Generated files are stored in `generated/`. The playbook distributes `known_tokens.csv` to `/etc/kubernetes/` on every control-plane host. Redeploy or restart kube-apiserver afterward so that `--token-auth-file` takes effect.
+Generated files are stored in `generated/`. The playbook distributes `known_tokens.csv` and `bootstrap-token.csv` to `/etc/kubernetes/` on every control-plane host. Kubernetes v1.25.16 uses `--token-auth-file` for static token authentication and `--enable-bootstrap-token-auth` for bootstrap-token Secret authentication. It does not support a `--bootstrap-token-file` API-server flag.
 
 The API server uses 10-second etcd health and readiness timeouts because the initial etcd quorum may take longer than the Kubernetes default 2 seconds to commit a request. These values can be overridden in the control-plane inventory.
 

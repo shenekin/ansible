@@ -18,6 +18,7 @@ ExecStart=/usr/local/bin/kube-apiserver \
   --tls-private-key-file=/etc/kubernetes/pki/apiserver.key \
   --client-ca-file=/etc/kubernetes/pki/ca.crt \
   --token-auth-file=/etc/kubernetes/known_tokens.csv \
+  --enable-bootstrap-token-auth \
   --kubelet-client-certificate=/etc/kubernetes/pki/apiserver-kubelet-client.crt \
   --kubelet-client-key=/etc/kubernetes/pki/apiserver-kubelet-client.key \
   --kubelet-certificate-authority=/etc/kubernetes/pki/ca.crt \
@@ -29,8 +30,7 @@ ExecStart=/usr/local/bin/kube-apiserver \
   --requestheader-group-headers=X-Remote-Group \
   --requestheader-username-headers=X-Remote-User \
   --authorization-mode=Node,RBAC \
-  --enable-admission-plugins=NodeRestriction,PodSecurity \
-  --admission-control-config-file={{ kubernetes_admission_config_path }} \
+  --enable-admission-plugins=NodeRestriction \
   --etcd-healthcheck-timeout={{ kubernetes_etcd_healthcheck_timeout | default('10s') }} \
   --etcd-readycheck-timeout={{ kubernetes_etcd_readycheck_timeout | default('10s') }} \
   --etcd-servers={{ kubernetes_etcd_endpoints }} \

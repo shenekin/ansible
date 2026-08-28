@@ -91,6 +91,14 @@ sysctl net.bridge.bridge-nf-call-iptables \
 
 swapon --show
 ```
+modprobe br_netfilter
+cat > /etc/sysctl.d/k8s.conf <<EOF
+net.ipv4.ip_forward = 1
+net.bridge.bridge-nf-call-iptables = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+EOF
+sysctl -p /etc/sysctl.d/k8s.conf
+
 
 `swapon --show` should return no active swap devices. The sysctl values should each be `1`.
 

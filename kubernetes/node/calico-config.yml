@@ -1,0 +1,29 @@
+# Calico deployment configuration.
+# This file is intentionally separate from the Calico manifest file to keep the
+# image sources and pod network settings easy to change without editing the YAML.
+
+calico_enabled: true
+
+# Calico release and image registry.
+calico_version: v3.26.5
+calico_image_registry: docker.m.daocloud.io
+calico_image_repository: calico
+
+# Container images. These values are used by the deployment playbook to replace the
+# corresponding image references in the shipped Calico manifest.
+calico_cni_image: "{{ calico_image_registry }}/{{ calico_image_repository }}/cni:{{ calico_version }}"
+calico_node_image: "{{ calico_image_registry }}/{{ calico_image_repository }}/node:{{ calico_version }}"
+calico_kube_controllers_image: "{{ calico_image_registry }}/{{ calico_image_repository }}/kube-controllers:{{ calico_version }}"
+
+# Calico network configuration.
+calico_ipv4pool_cidr: "192.168.0.0/16"
+calico_backend: bird
+calico_mtu: "0"
+
+# Kubernetes access settings for applying the manifest.
+calico_kubeconfig: "/etc/kubernetes/admin.conf"
+calico_kubectl_bin: "/usr/local/bin/kubectl"
+
+# The source Calico manifest that will be copied and updated before apply.
+calico_manifest_source: "{{ playbook_dir }}/calico.yaml"
+calico_manifest_rendered: "/tmp/calico-rendered.yaml"

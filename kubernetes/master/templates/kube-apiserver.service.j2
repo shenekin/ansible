@@ -19,6 +19,7 @@ ExecStart=/usr/local/bin/kube-apiserver \
   --client-ca-file=/etc/kubernetes/pki/ca.crt \
   --token-auth-file=/etc/kubernetes/known_tokens.csv \
   --enable-bootstrap-token-auth \
+  --allow-privileged=true \
   --kubelet-client-certificate=/etc/kubernetes/pki/apiserver-kubelet-client.crt \
   --kubelet-client-key=/etc/kubernetes/pki/apiserver-kubelet-client.key \
   --kubelet-certificate-authority=/etc/kubernetes/pki/ca.crt \

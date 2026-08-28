@@ -5,6 +5,7 @@ Wants=network-online.target containerd.service
 After=network-online.target containerd.service
 
 [Service]
+Environment="KUBELET_EXTRA_ARGS=--fail-swap-on=false --network-plugin=cni --node-status-update-frequency=4s"
 ExecStart={{ kubernetes_binary_dir }}/kubelet \
 	--kubeconfig={{ kubelet_kubeconfig }} \
 	--container-runtime-endpoint={{ containerd_socket }} \

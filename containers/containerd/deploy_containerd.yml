@@ -99,6 +99,15 @@
           when: containerd_configure_systemd_cgroup | bool
           notify: Restart containerd
 
+        - name: Configure sandbox image for CRI
+          ansible.builtin.replace:
+            path: "{{ containerd_config_path }}"
+            regexp: '^\s*sandbox_image\s*=\s*".*"\s*$'
+            replace: '    sandbox_image = "{{ containerd_sandbox_image }}"'
+            backup: true
+          when: containerd_sandbox_image is defined
+          notify: Restart containerd
+
         - name: Install containerd systemd unit
           ansible.builtin.get_url:
             url: "{{ download_mirror }}/github.com/containerd/containerd/raw/v{{ containerd_version }}/containerd.service"

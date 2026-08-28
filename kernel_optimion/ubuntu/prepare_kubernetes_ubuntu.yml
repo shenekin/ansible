@@ -42,6 +42,14 @@
         - ansible_facts.swaptotal_mb | int > 0
       changed_when: true
 
+    - name: Comment out the /swap.img entry in /etc/fstab
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^{{ kubernetes_swap_fstab_entry | regex_escape }}(\s+.*)$'
+        replace: '#{{ kubernetes_swap_fstab_entry }}\1'
+        backup: true
+      when: kubernetes_disable_swap | bool
+
     - name: Disable configured swap entries after reboot
       ansible.builtin.replace:
         path: /etc/fstab

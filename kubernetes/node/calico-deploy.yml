@@ -1,0 +1,131 @@
+---
+- name: Deploy Calico CNI
+  hosts: "{{ calico_apply_host | default('k8s-master-01') }}"
+  become: true
+  gather_facts: true
+  vars_files:
+    - calico-config.yml
+
+  vars:
+    calico_kubeconfig: "/etc/kubernetes/admin.conf"
+    calico_kubectl_bin: "/usr/local/bin/kubectl"
+    calico_manifest_source: "{{ playbook_dir }}/calico.yaml"
+    calico_manifest_rendered: "/tmp/calico-rendered.yaml"
+
+  pre_tasks:
+    - name: Validate Calico configuration
+      ansible.builtin.assert:
+        that:
+          - calico_enabled | bool
+          - calico_cni_image is defined
+          - calico_node_image is defined
+          - calico_kube_controllers_image is defined
+          - calico_ipv4pool_cidr is defined
+          - calico_ipv4pool_cidr is match('^([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$')
+        fail_msg: "Calico settings are incomplete or invalid. Check calico-config.yml."
+
+    - name: Check the source Calico manifest exists
+      ansible.builtin.stat:
+        path: "{{ calico_manifest_source }}"
+      register: calico_manifest_stat
+      delegate_to: localhost
+      become: false
+
+    - name: Fail when the source manifest is missing
+      ansible.builtin.assert:
+        that:
+          - calico_manifest_stat.stat.exists
+        fail_msg: "Calico source manifest is missing: {{ calico_manifest_source }}"
+
+    - name: Check the Kubernetes admin kubeconfig exists
+      ansible.builtin.stat:
+        path: "{{ calico_kubeconfig }}"
+      register: calico_kubeconfig_stat
+
+    - name: Fail when the admin kubeconfig is missing
+      ansible.builtin.assert:
+        that:
+          - calico_kubeconfig_stat.stat.exists
+        fail_msg: "Kubernetes admin kubeconfig is missing: {{ calico_kubeconfig }}"
+
+    - name: Check for kubectl binary
+      ansible.builtin.stat:
+        path: "{{ calico_kubectl_bin }}"
+      register: calico_kubectl_stat
+
+    - name: Fail when kubectl is missing
+      ansible.builtin.assert:
+        that:
+          - calico_kubectl_stat.stat.exists
+        fail_msg: "kubectl binary is missing: {{ calico_kubectl_bin }}"
+
+  tasks:
+    - name: Copy the original Calico manifest to a rendered working file
+      ansible.builtin.copy:
+        src: "{{ calico_manifest_source }}"
+        dest: "{{ calico_manifest_rendered }}"
+        owner: root
+        group: root
+        mode: '0644'
+      when: not ansible_check_mode
+
+    - name: Replace the Calico CNI image in the rendered manifest
+      ansible.builtin.replace:
+        path: "{{ calico_manifest_rendered }}"
+        regexp: 'docker\.m\.daocloud\.io/calico/cni:v3\.26\.5'
+        replace: "{{ calico_cni_image }}"
+      when: not ansible_check_mode
+
+    - name: Replace the Calico node image in the rendered manifest
+      ansible.builtin.replace:
+        path: "{{ calico_manifest_rendered }}"
+        regexp: 'docker\.m\.daocloud\.io/calico/node:v3\.26\.5'
+        replace: "{{ calico_node_image }}"
+      when: not ansible_check_mode
+
+    - name: Replace the Calico kube-controllers image in the rendered manifest
+      ansible.builtin.replace:
+        path: "{{ calico_manifest_rendered }}"
+        regexp: 'docker\.m\.daocloud\.io/calico/kube-controllers:v3\.26\.5'
+        replace: "{{ calico_kube_controllers_image }}"
+      when: not ansible_check_mode
+
+    - name: Replace the Calico pod CIDR in the rendered manifest
+      ansible.builtin.replace:
+        path: "{{ calico_manifest_rendered }}"
+        regexp: '#\s*- name: CALICO_IPV4POOL_CIDR\n\s*#\s*value: "192\.168\.0\.0/16"'
+        replace: |
+          - name: CALICO_IPV4POOL_CIDR
+            value: "{{ calico_ipv4pool_cidr }}"
+      when: not ansible_check_mode
+
+    - name: Replace the Calico backend in the rendered manifest
+      ansible.builtin.replace:
+        path: "{{ calico_manifest_rendered }}"
+        regexp: 'calico_backend: "bird"'
+        replace: 'calico_backend: "{{ calico_backend }}"'
+      when: not ansible_check_mode
+
+    - name: Replace the Calico MTU in the rendered manifest
+      ansible.builtin.replace:
+        path: "{{ calico_manifest_rendered }}"
+        regexp: 'veth_mtu: "0"'
+        replace: 'veth_mtu: "{{ calico_mtu }}"'
+      when: not ansible_check_mode
+
+    - name: Apply the Calico manifest to the cluster
+      ansible.builtin.command:
+        argv:
+          - "{{ calico_kubectl_bin }}"
+          - "--kubeconfig={{ calico_kubeconfig }}"
+          - apply
+          - -f
+          - "{{ calico_manifest_rendered }}"
+      register: calico_apply_result
+      changed_when: "'configured' in calico_apply_result.stdout or 'created' in calico_apply_result.stdout"
+      when: not ansible_check_mode
+
+    - name: Show Calico apply output
+      ansible.builtin.debug:
+        var: calico_apply_result.stdout
+      when: calico_apply_result.stdout is defined and calico_apply_result.stdout | length > 0

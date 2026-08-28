@@ -5,7 +5,7 @@ Wants=network-online.target
 After=network-online.target containerd.service
 
 [Service]
-ExecStart={{ kubernetes_binary_dir }}/kube-proxy --config={{ kubernetes_config_dir }}/kube-proxy.yaml --kubeconfig={{ kube_proxy_kubeconfig }}
+ExecStart={{ kubernetes_binary_dir }}/kube-proxy --config={{ kubernetes_config_dir }}/kube-proxy.yaml
 Restart=always
 RestartSec=10
 

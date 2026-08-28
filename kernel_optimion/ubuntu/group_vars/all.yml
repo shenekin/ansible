@@ -17,6 +17,7 @@ kubernetes_host_packages:
   - socat
 
 kubernetes_disable_swap: true
+kubernetes_swappiness: 0
 
 # A reboot is not required for sysctl or module changes.
 kubernetes_reboot_after_configuration: false

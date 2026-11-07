@@ -1,0 +1,47 @@
+# Network
+bind 0.0.0.0
+protected-mode no
+port {{ redis_port }}
+tcp-backlog 511
+timeout 0
+tcp-keepalive 300
+daemonize no
+
+# Security
+requirepass {{ redis_password }}
+masterauth {{ redis_password }}
+
+# Directories
+dir {{ redis_data_dir }}
+logfile {{ redis_log_dir }}/redis.log
+pidfile {{ redis_runtime_dir }}/redis.pid
+
+# Persistence
+appendonly yes
+appendfsync everysec
+no-appendfsync-on-rewrite yes
+auto-aof-rewrite-percentage 100
+auto-aof-rewrite-min-size 64mb
+
+save 900 1
+save 300 10
+save 60 10000
+rdbcompression yes
+rdbchecksum yes
+dbfilename dump.rdb
+
+# Slow log and memory
+slowlog-log-slower-than 10000
+slowlog-max-len 512
+maxmemory 8gb
+maxmemory-policy allkeys-lru
+
+# Clients
+maxclients 10000
+
+# Cluster
+cluster-enabled yes
+cluster-config-file nodes-{{ redis_port }}.conf
+cluster-node-timeout 15000
+cluster-require-full-coverage no
+cluster-migration-barrier 1

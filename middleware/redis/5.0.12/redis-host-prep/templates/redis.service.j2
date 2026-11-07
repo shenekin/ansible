@@ -1,0 +1,17 @@
+[Unit]
+Description=Redis Server
+After=network.target
+
+[Service]
+Type=simple
+User={{ redis_user }}
+Group={{ redis_user }}
+ExecStart={{ redis_install_prefix }}/bin/redis-server {{ redis_config_dir }}/{{ redis_instance_name }}/redis.conf
+ExecStop={{ redis_install_prefix }}/bin/redis-cli --no-auth-warning -a {{ redis_password }} -p {{ redis_port }} shutdown
+Restart=always
+LimitNOFILE={{ redis_nofile }}
+RuntimeDirectory=redis
+LogsDirectory=redis
+
+[Install]
+WantedBy=multi-user.target

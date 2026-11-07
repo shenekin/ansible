@@ -46,3 +46,15 @@ redis_build_packages:
   - make
   - gcc-13
   - g++-13
+
+# Redis installation
+redis_install_prefix: /usr/local/redis
+redis_config_dir: /etc/redis
+redis_data_dir: /var/lib/redis
+redis_log_dir: /var/log/redis
+redis_runtime_dir: /var/run/redis
+redis_port: 6379
+redis_password: YourStrongPassw0rd!
+redis_instance_name: "6379"
+redis_source_archive: /Users/ekin/Downloads/softs/redis-5.0.12.tar.gz
+redis_source_directory: /usr/local/src/redis-5.0.12

@@ -1,0 +1,124 @@
+---
+- name: Install and configure Redis 5.0.12
+  hosts: redis_nodes
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Stop legacy Redis instance services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+      loop:
+        - "redis@{{ redis_instance_name }}.service"
+        - redis@redis5.0.12.service
+      failed_when: false
+      when: not ansible_check_mode
+
+    - name: Stop stale Redis processes outside systemd
+      ansible.builtin.shell: |
+        pids=$(pgrep redis-server || true)
+        if [ -n "$pids" ]; then
+          kill -TERM $pids
+          for i in 1 2 3 4 5; do
+            ss -ltn | grep -q ':6379 ' || break
+            sleep 1
+          done
+          pids=$(pgrep redis-server || true)
+          if [ -n "$pids" ]; then
+            kill -KILL $pids
+          fi
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Create Redis directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ redis_user }}"
+        group: "{{ redis_user }}"
+        mode: "0755"
+      loop:
+        - "{{ redis_install_prefix }}"
+        - "{{ redis_config_dir }}/{{ redis_instance_name }}"
+        - "{{ redis_data_dir }}"
+        - "{{ redis_log_dir }}"
+        - "{{ redis_runtime_dir }}"
+        - /usr/local/src
+
+    - name: Copy Redis source archive
+      ansible.builtin.copy:
+        src: "{{ redis_source_archive }}"
+        dest: /tmp/redis-5.0.12.tar.gz
+        mode: "0644"
+
+    - name: Extract Redis source archive
+      ansible.builtin.unarchive:
+        src: /tmp/redis-5.0.12.tar.gz
+        dest: /usr/local/src
+        remote_src: true
+        creates: "{{ redis_source_directory }}"
+      when: not ansible_check_mode
+
+    - name: Build and install Redis
+      ansible.builtin.shell: |
+        make MALLOC=libc CFLAGS="-fcommon" -j$(nproc)
+        make install PREFIX={{ redis_install_prefix }}
+      args:
+        chdir: "{{ redis_source_directory }}"
+        executable: /bin/bash
+      environment:
+        CC: /usr/bin/gcc-13
+      register: redis_build
+      changed_when: true
+      when: not ansible_check_mode
+
+    - name: Render Redis configuration
+      ansible.builtin.template:
+        src: redis.conf.j2
+        dest: "{{ redis_config_dir }}/{{ redis_instance_name }}/redis.conf"
+        owner: "{{ redis_user }}"
+        group: "{{ redis_user }}"
+        mode: "0640"
+      when: not ansible_check_mode
+
+    - name: Remove legacy Redis instance units
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/redis@.service
+        - /etc/systemd/system/multi-user.target.wants/redis@6379.service
+        - /etc/systemd/system/multi-user.target.wants/redis@redis5.0.12.service
+      when: not ansible_check_mode
+
+    - name: Render Redis systemd unit
+      ansible.builtin.template:
+        src: redis.service.j2
+        dest: /etc/systemd/system/redis.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd
+      when: not ansible_check_mode
+
+    - name: Enable Redis service
+      ansible.builtin.systemd:
+        name: redis.service
+        enabled: true
+        daemon_reload: true
+      when: not ansible_check_mode
+
+    - name: Start Redis service
+      ansible.builtin.systemd:
+        name: redis.service
+        state: restarted
+      when: not ansible_check_mode
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true

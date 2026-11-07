@@ -1,0 +1,106 @@
+---
+- name: Prepare Redis host
+  hosts: redis_nodes
+  become: true
+  gather_facts: true
+
+  handlers:
+    - name: reload sysctl
+      ansible.builtin.command: sysctl --system
+      changed_when: false
+
+    - name: reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+  tasks:
+    # ---- 1. Kernel parameters (rendered by Jinja2) ----
+    - name: Render sysctl drop-in
+      ansible.builtin.template:
+        src: redis-sysctl.conf.j2
+        dest: "{{ redis_sysctl_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: reload sysctl
+
+    - name: Ensure sysctl drop-in is applied now
+      ansible.builtin.command: "sysctl -p {{ redis_sysctl_file }}"
+      changed_when: false
+
+    # ---- 2. Transparent Huge Pages ----
+    - name: Disable THP at runtime
+      ansible.builtin.shell: |
+        for f in enabled defrag; do
+          if ! grep -q '\[never\]' "{{ redis_thp_path }}/$f"; then
+            echo never > "{{ redis_thp_path }}/$f"
+          fi
+        done
+      changed_when: false
+
+    - name: Render disable-thp systemd unit
+      ansible.builtin.template:
+        src: disable-thp.service.j2
+        dest: "{{ redis_thp_unit_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: reload systemd
+
+    - name: Enable and start disable-thp unit
+      ansible.builtin.systemd:
+        name: "{{ redis_thp_unit }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: not ansible_check_mode
+
+    # ---- 3. Service user ----
+    - name: Create redis system user
+      ansible.builtin.user:
+        name: "{{ redis_user }}"
+        system: "{{ redis_system }}"
+        create_home: "{{ redis_create_home }}"
+        shell: "{{ redis_shell }}"
+        state: present
+
+    # ---- 4. File descriptors ----
+    - name: Render pam limits for redis user
+      ansible.builtin.template:
+        src: redis-limits.conf.j2
+        dest: "{{ redis_limits_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Create Redis systemd drop-in directory
+      ansible.builtin.file:
+        path: "{{ redis_systemd_dropin_file | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Render systemd drop-in for redis limits
+      ansible.builtin.template:
+        src: redis-systemd-limits.conf.j2
+        dest: "{{ redis_systemd_dropin_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: reload systemd
+
+    # ---- 5. Time synchronization ----
+    - name: Install chrony
+      ansible.builtin.apt:
+        name: "{{ redis_chrony_package }}"
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Enable and start chrony
+      ansible.builtin.systemd:
+        name: "{{ redis_chrony_service }}"
+        enabled: true
+        state: started
+      when: not ansible_check_mode

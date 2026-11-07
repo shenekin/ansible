@@ -1,0 +1,5 @@
+# Managed by Ansible - do not edit by hand
+{{ redis_user }} soft nofile {{ redis_nofile }}
+{{ redis_user }} hard nofile {{ redis_nofile }}
+{{ redis_user }} soft nproc  {{ redis_nproc }}
+{{ redis_user }} hard nproc  {{ redis_nproc }}

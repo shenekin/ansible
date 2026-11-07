@@ -1,0 +1,48 @@
+---
+# User
+redis_user: redis
+redis_shell: /sbin/nologin
+redis_system: true
+redis_create_home: false
+
+# Limits
+redis_nofile: 65535
+redis_nproc: 65535
+
+# Kernel parameters
+redis_sysctl:
+  vm.overcommit_memory: 1
+  net.core.somaxconn: 65535
+  net.ipv4.tcp_max_syn_backlog: 65535
+  net.ipv4.tcp_tw_reuse: 1
+  vm.swappiness: 1
+  net.ipv4.tcp_keepalive_time: 300
+
+# Paths
+redis_sysctl_file: /etc/sysctl.d/99-redis.conf
+redis_limits_file: /etc/security/limits.d/redis.conf
+redis_thp_path: /sys/kernel/mm/transparent_hugepage
+redis_thp_unit_path: /etc/systemd/system/disable-thp.service
+redis_thp_unit: disable-thp.service
+redis_systemd_dropin_file: /etc/systemd/system/redis.service.d/limits.conf
+
+# chrony
+redis_chrony_package: chrony
+redis_chrony_service: chrony
+
+# Time zone
+timezone: Asia/Shanghai
+
+# GCC toolchain
+redis_build_packages:
+  - build-essential
+  - tcl
+  - pkg-config
+  - libssl-dev
+  - libsystemd-dev
+  - curl
+  - wget
+  - gcc
+  - make
+  - gcc-13
+  - g++-13

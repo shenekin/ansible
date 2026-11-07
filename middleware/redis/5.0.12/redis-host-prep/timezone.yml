@@ -1,0 +1,21 @@
+---
+- name: Configure Redis node time zone
+  hosts: redis_nodes
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Render system time zone configuration
+      ansible.builtin.template:
+        src: timezone.j2
+        dest: /etc/timezone
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Apply system time zone
+
+  handlers:
+    - name: Apply system time zone
+      ansible.builtin.command:
+        cmd: "timedatectl set-timezone {{ timezone }}"
+      changed_when: true

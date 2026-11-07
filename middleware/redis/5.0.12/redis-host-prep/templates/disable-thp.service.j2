@@ -1,0 +1,15 @@
+[Unit]
+Description=Disable Transparent Huge Pages
+DefaultDependencies=no
+After=sysinit.target local-fs.target
+Before=redis.service
+
+[Service]
+Type=oneshot
+{% for f in ['enabled', 'defrag'] %}
+ExecStart=/bin/sh -c 'echo never > {{ redis_thp_path }}/{{ f }}'
+{% endfor %}
+RemainAfterExit=yes
+
+[Install]
+WantedBy=basic.target

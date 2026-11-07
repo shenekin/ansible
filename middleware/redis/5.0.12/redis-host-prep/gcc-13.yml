@@ -1,0 +1,31 @@
+---
+- name: Install GCC 13 build toolchain
+  hosts: redis_nodes
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Install GCC 13 build packages
+      ansible.builtin.apt:
+        name: "{{ redis_build_packages }}"
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Configure GCC 13 as the default compiler
+      ansible.builtin.shell: |
+        update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130
+        update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 130
+        update-alternatives --set gcc /usr/bin/gcc-13
+        update-alternatives --set g++ /usr/bin/g++-13
+      args:
+        executable: /bin/bash
+
+    - name: Verify GCC 13 version
+      ansible.builtin.command: gcc --version
+      register: gcc_version
+      changed_when: false
+
+    - name: Display GCC version
+      ansible.builtin.debug:
+        var: gcc_version.stdout_lines

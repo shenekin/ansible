@@ -1,0 +1,4 @@
+# Managed by Ansible - do not edit by hand
+{% for key, value in redis_sysctl | dictsort %}
+{{ key }} = {{ value }}
+{% endfor %}

@@ -24,6 +24,7 @@ Activate Ansible before running commands:
 
 ```bash
 source ~/ansible-core/bin/activate
+
 ```
 
 Review the relevant inventory before deployment, especially host addresses, network interface names, VIPs, and passwords.

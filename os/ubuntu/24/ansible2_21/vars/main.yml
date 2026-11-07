@@ -1,0 +1,8 @@
+---
+dns_servers:
+  - "61.139.2.69"
+  - "218.6.200.139"
+dns_search:
+  - "local.lan"
+# Ubuntu 24.04 (noble) Alibaba Mirror, deb822 format (/etc/apt/sources.list.d/ubuntu.sources)
+apt_mirror: "https://mirrors.aliyun.com"

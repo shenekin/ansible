@@ -1,0 +1,80 @@
+---
+- name: Init Ubuntu24.04 | Hostname + Static IP + DNS + APT Mirror
+  hosts: redis_nodes
+  become: true
+  gather_facts: true
+  vars_files:
+    - vars/main.yml
+  tasks:
+    # Prevent cloud-init from replacing the inventory hostname during boot.
+    - name: Preserve inventory hostname in cloud-init
+      ansible.builtin.lineinfile:
+        path: /etc/cloud/cloud.cfg
+        regexp: '^preserve_hostname:'
+        line: 'preserve_hostname: true'
+        create: true
+        mode: '0644'
+
+    - name: Persist inventory hostname
+      ansible.builtin.copy:
+        content: "{{ inventory_hostname }}\n"
+        dest: /etc/hostname
+        owner: root
+        group: root
+        mode: '0644'
+
+    # Update the runtime hostname through systemd-hostnamed.
+    - name: Set runtime hostname
+      ansible.builtin.hostname:
+        name: "{{ inventory_hostname }}"
+        use: systemd
+
+    # Persist the managed static IP, gateway, and DNS configuration in Netplan.
+    - name: Write netplan config
+      ansible.builtin.copy:
+        dest: /etc/netplan/00-ansible-static.yaml
+        content: |
+          network:
+            version: 2
+            renderer: networkd
+            ethernets:
+              {{ iface }}:
+                dhcp4: false
+                addresses: [ {{ net_ip }} ]
+                routes:
+                  - to: default
+                    via: {{ net_gw }}
+                nameservers:
+                  addresses: {{ dns_servers | to_json }}
+                  search: {{ dns_search | to_json }}
+        mode: '0600'
+      notify: Apply netplan configuration
+
+    - name: Replace ubuntu.sources mirror
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/ubuntu.sources
+        content: |
+          Types: deb deb-src
+          URIs: {{ apt_mirror }}/ubuntu
+          Suites: noble noble-updates noble-backports
+          Components: main restricted universe multiverse
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+          Types: deb deb-src
+          URIs: {{ apt_mirror }}/ubuntu
+          Suites: noble-security
+          Components: main restricted universe multiverse
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+    # Refresh APT metadata after installing the persistent Ubuntu package mirror configuration.
+    - name: Apt update cache
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+  handlers:
+    # Apply the persistent Netplan configuration only when the generated file changes.
+    - name: Apply netplan configuration
+      ansible.builtin.command:
+        cmd: netplan apply
+      changed_when: false

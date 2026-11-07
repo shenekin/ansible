@@ -8,6 +8,10 @@ Common Ansible ad hoc commands for this repository. Run them from `/root/ansible
 # Activate the Ansible virtual environment.
 source ~/ansible-core/bin/activate
 
+On MacOS
+ansible ubuntu_nodes -m ping
+source ~/.pyenv/versions/ansible-2.21-env/bin/activate
+
 # Confirm the active Ansible version.
 ansible --version
 ```
@@ -37,8 +41,9 @@ ansible etcd01 -i etcd/inventory.ini -m ansible.builtin.ping
 # Dispaly all groups
  ansible localhost -m debug -a 'var=groups'
 # Poweroff all servers
+# all = your server group
 ansible all -m shell -a 'poweroff'   
-ansible all -m command -a 'shutdown -h now' -b
+ansible redis_nodes -m command -a 'shutdown -h now' -b
 
 
 # Display gathered facts for all etcd hosts.

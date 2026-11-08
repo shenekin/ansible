@@ -85,16 +85,6 @@
         mode: "0640"
       when: not ansible_check_mode
 
-    - name: Remove legacy Redis instance units
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: absent
-      loop:
-        - /etc/systemd/system/redis@.service
-        - /etc/systemd/system/multi-user.target.wants/redis@6379.service
-        - /etc/systemd/system/multi-user.target.wants/redis@redis5.0.12.service
-      when: not ansible_check_mode
-
     - name: Render Redis systemd unit
       ansible.builtin.template:
         src: redis.service.j2

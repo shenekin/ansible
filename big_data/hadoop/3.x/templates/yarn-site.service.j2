@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+{% for name, value in yarn_site | dictsort %}
+  <property>
+    <name>{{ name }}</name>
+    <value>{{ value }}</value>
+  </property>
+{% endfor %}
+</configuration>

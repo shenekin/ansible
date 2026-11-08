@@ -1,0 +1,66 @@
+---
+hadoop:
+  version: "3.3.6"
+  local_archive: "/Users/ekin/Downloads/hadoop-3.3.6.tar.gz"
+  install_dir: "/opt/hadoop"
+  owner: "hadoop"
+  group: "hadoop"
+  java_package: "openjdk-11-jdk"
+  java_home: "/usr/lib/jvm/java-11-openjdk-amd64"
+
+cluster:
+  name_node_host: "hadoop01"
+  resource_manager_host: "hadoop01"
+  fs_default_uri: "hdfs://hadoop01:9000"
+  yarn_resource_tracker_address: "hadoop01:8031"
+  yarn_scheduler_address: "hadoop01:8030"
+  yarn_resource_manager_address: "hadoop01:8032"
+  yarn_admin_address: "hadoop01:8033"
+
+baseline:
+  disable_swap: true
+  nofile_limit: 131072
+  swappiness: 1
+  somaxconn: 4096
+  backup_dir: "/var/backups/hadoop-ansible"
+  namenode_g1gc: true
+
+paths:
+  hdfs_name_dir: "/data/hadoop/hdfs/namenode"
+  hdfs_data_dir: "/data/hadoop/hdfs/datanode"
+  mapred_local_dir: "/data/hadoop/mapred/local"
+  yarn_log_dir: "/data/hadoop/yarn/logs"
+  pid_dir: "/var/run/hadoop"
+  log_dir: "/var/log/hadoop"
+
+core_site:
+  fs.defaultFS: "{{ cluster.fs_default_uri }}"
+  hadoop.tmp.dir: "/data/hadoop/tmp"
+  io.file.buffer.size: 131072
+
+hdfs_site:
+  dfs.replication: 3
+  dfs.blocksize: 268435456
+  dfs.namenode.name.dir: "file://{{ paths.hdfs_name_dir }}"
+  dfs.datanode.data.dir: "file://{{ paths.hdfs_data_dir }}"
+  dfs.permissions.enabled: true
+
+mapred_site:
+  mapreduce.framework.name: "yarn"
+  yarn.app.mapreduce.am.env: "HADOOP_MAPRED_HOME=/opt/hadoop/hadoop-3.3.6"
+  mapreduce.map.env: "HADOOP_MAPRED_HOME=/opt/hadoop/hadoop-3.3.6"
+  mapreduce.reduce.env: "HADOOP_MAPRED_HOME=/opt/hadoop/hadoop-3.3.6"
+
+yarn_site:
+  yarn.resourcemanager.hostname: "{{ cluster.resource_manager_host }}"
+  yarn.resourcemanager.address: "{{ cluster.yarn_resource_manager_address }}"
+  yarn.resourcemanager.scheduler.address: "{{ cluster.yarn_scheduler_address }}"
+  yarn.resourcemanager.resource-tracker.address: "{{ cluster.yarn_resource_tracker_address }}"
+  yarn.resourcemanager.admin.address: "{{ cluster.yarn_admin_address }}"
+  yarn.nodemanager.aux-services: "mapreduce_shuffle"
+  yarn.nodemanager.env-whitelist: "JAVA_HOME,HADOOP_COMMON_HOME,HADOOP_HDFS_HOME,HADOOP_CONF_DIR,HADOOP_MAPRED_HOME,HADOOP_YARN_HOME"
+
+workers:
+  - hadoop01
+  - hadoop02
+  - hadoop03

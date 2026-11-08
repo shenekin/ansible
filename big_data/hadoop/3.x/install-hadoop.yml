@@ -1,0 +1,244 @@
+---
+- name: Install and configure Hadoop 3.x
+  hosts: hadoop_cluster
+  become: true
+  gather_facts: true
+  vars_files:
+    - vars/hadoop_configuration.yaml
+  tasks:
+    - name: Disable active swap
+      ansible.builtin.command: swapoff -a
+      changed_when: true
+      when: baseline.disable_swap
+
+    - name: Remove persistent swap entries from fstab
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^([^#\n]*\s+none\s+swap\s+[^\n]*)$'
+        replace: '# \1'
+      when: baseline.disable_swap
+
+    - name: Configure Hadoop kernel parameters
+      ansible.builtin.template:
+        src: sysctl-hadoop.service.j2
+        dest: /etc/sysctl.d/99-hadoop-tuning.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Apply Hadoop sysctl settings
+
+    - name: Configure Hadoop process file limits
+      ansible.builtin.template:
+        src: limits-hadoop.service.j2
+        dest: /etc/security/limits.d/99-hadoop.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Create configuration backup directory
+      ansible.builtin.file:
+        path: "{{ baseline.backup_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Back up system configuration files
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ baseline.backup_dir }}/{{ item | basename }}.{{ ansible_date_time.date }}"
+        remote_src: true
+        mode: preserve
+      loop:
+        - /etc/fstab
+        - /etc/sysctl.conf
+      failed_when: false
+
+    - name: Back up system tuning directories
+      ansible.builtin.command:
+        cmd: "tar -czf {{ baseline.backup_dir }}/{{ item | basename }}.{{ ansible_date_time.date }}.tar.gz -C {{ item | dirname }} {{ item | basename }}"
+      loop:
+        - /etc/security/limits.d
+        - /etc/sysctl.d
+      changed_when: true
+      failed_when: false
+
+    - name: Install Hadoop runtime packages
+      ansible.builtin.apt:
+        name:
+          - "{{ hadoop.java_package }}"
+          - curl
+          - tar
+        state: present
+        update_cache: true
+
+    - name: Create Hadoop system group
+      ansible.builtin.group:
+        name: "{{ hadoop.group }}"
+        system: true
+        state: present
+
+    - name: Create Hadoop system user
+      ansible.builtin.user:
+        name: "{{ hadoop.owner }}"
+        group: "{{ hadoop.group }}"
+        system: true
+        home: "{{ hadoop.install_dir }}"
+        shell: /usr/sbin/nologin
+        create_home: false
+        state: present
+
+    - name: Create Hadoop directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ hadoop.owner }}"
+        group: "{{ hadoop.group }}"
+        mode: "0755"
+      loop: >-
+        {{ [hadoop.install_dir, paths.hdfs_name_dir, paths.hdfs_data_dir,
+            paths.mapred_local_dir, paths.yarn_log_dir, paths.pid_dir,
+            paths.log_dir, '/data/hadoop/tmp'] | unique }}
+
+    - name: Check whether Hadoop is installed
+      ansible.builtin.stat:
+        path: "{{ hadoop.install_dir }}/hadoop-{{ hadoop.version }}"
+      register: hadoop_installation
+
+    - name: Copy local Hadoop archive to managed host
+      ansible.builtin.copy:
+        src: "{{ hadoop.local_archive }}"
+        dest: "{{ hadoop.install_dir }}/hadoop-{{ hadoop.version }}.tar.gz"
+        owner: "{{ hadoop.owner }}"
+        group: "{{ hadoop.group }}"
+        mode: "0644"
+      when: not hadoop_installation.stat.exists
+
+    - name: Extract Hadoop archive
+      ansible.builtin.unarchive:
+        src: "{{ hadoop.install_dir }}/hadoop-{{ hadoop.version }}.tar.gz"
+        dest: "{{ hadoop.install_dir }}"
+        remote_src: true
+        owner: "{{ hadoop.owner }}"
+        group: "{{ hadoop.group }}"
+      when: not hadoop_installation.stat.exists
+
+    - name: Create Hadoop installation symlink
+      ansible.builtin.file:
+        src: "{{ hadoop.install_dir }}/hadoop-{{ hadoop.version }}"
+        dest: "{{ hadoop.install_dir }}/current"
+        owner: "{{ hadoop.owner }}"
+        group: "{{ hadoop.group }}"
+        state: link
+        force: true
+
+    - name: Configure Hadoop XML files
+      ansible.builtin.template:
+        src: "{{ item.template }}"
+        dest: "{{ hadoop.install_dir }}/current/etc/hadoop/{{ item.destination }}"
+        owner: "{{ hadoop.owner }}"
+        group: "{{ hadoop.group }}"
+        mode: "0644"
+      loop:
+        - { template: core-site.service.j2, destination: core-site.xml }
+        - { template: hdfs-site.service.j2, destination: hdfs-site.xml }
+        - { template: yarn-site.service.j2, destination: yarn-site.xml }
+        - { template: mapred-site.service.j2, destination: mapred-site.xml }
+      notify: Reload systemd
+
+    - name: Configure Hadoop environment
+      ansible.builtin.template:
+        src: hadoop-env.service.j2
+        dest: "{{ hadoop.install_dir }}/current/etc/hadoop/hadoop-env.sh"
+        owner: "{{ hadoop.owner }}"
+        group: "{{ hadoop.group }}"
+        mode: "0755"
+      notify: Reload systemd
+
+    - name: Configure Hadoop workers
+      ansible.builtin.template:
+        src: workers.service.j2
+        dest: "{{ hadoop.install_dir }}/current/etc/hadoop/workers"
+        owner: "{{ hadoop.owner }}"
+        group: "{{ hadoop.group }}"
+        mode: "0644"
+
+    - name: Configure Hadoop systemd units
+      ansible.builtin.template:
+        src: "{{ item.template }}"
+        dest: "/etc/systemd/system/{{ item.service }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - { template: namenode.service.j2, service: hadoop-namenode.service }
+        - { template: datanode.service.j2, service: hadoop-datanode.service }
+        - { template: resource-manager.service.j2, service: hadoop-resource-manager.service }
+        - { template: node-manager.service.j2, service: hadoop-node-manager.service }
+      notify: Reload systemd
+
+    - name: Flush handlers before starting Hadoop services
+      ansible.builtin.meta: flush_handlers
+
+    - name: Check whether the NameNode metadata directory is initialized
+      ansible.builtin.stat:
+        path: "{{ paths.hdfs_name_dir }}/current/VERSION"
+      register: namenode_metadata
+      when: inventory_hostname in groups['name_nodes']
+
+    - name: Format the Hadoop NameNode
+      ansible.builtin.command:
+        cmd: "{{ hadoop.install_dir }}/current/bin/hdfs namenode -format -force"
+      environment:
+        JAVA_HOME: "{{ hadoop.java_home }}"
+        HADOOP_HOME: "{{ hadoop.install_dir }}/current"
+        HADOOP_CONF_DIR: "{{ hadoop.install_dir }}/current/etc/hadoop"
+      when:
+        - inventory_hostname in groups['name_nodes']
+        - not namenode_metadata.stat.exists
+
+    - name: Set NameNode metadata ownership
+      ansible.builtin.file:
+        path: "{{ paths.hdfs_name_dir }}"
+        owner: "{{ hadoop.owner }}"
+        group: "{{ hadoop.group }}"
+        recurse: true
+        state: directory
+      when: inventory_hostname in groups['name_nodes']
+
+    - name: Enable Hadoop DataNode service
+      ansible.builtin.systemd:
+        name: hadoop-datanode
+        enabled: true
+        state: started
+      when: inventory_hostname in groups['data_nodes']
+
+    - name: Enable Hadoop NodeManager service
+      ansible.builtin.systemd:
+        name: hadoop-node-manager
+        enabled: true
+        state: started
+      when: inventory_hostname in groups['node_managers']
+
+    - name: Enable Hadoop NameNode service
+      ansible.builtin.systemd:
+        name: hadoop-namenode
+        enabled: true
+        state: started
+      when: inventory_hostname in groups['name_nodes']
+
+    - name: Enable Hadoop ResourceManager service
+      ansible.builtin.systemd:
+        name: hadoop-resource-manager
+        enabled: true
+        state: started
+      when: inventory_hostname in groups['resource_managers']
+
+  handlers:
+    - name: Apply Hadoop sysctl settings
+      ansible.builtin.command: sysctl --system
+      changed_when: false
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true

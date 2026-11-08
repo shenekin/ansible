@@ -1,0 +1,4 @@
+{{ hadoop.owner }} soft nofile {{ baseline.nofile_limit }}
+{{ hadoop.owner }} hard nofile {{ baseline.nofile_limit }}
+{{ hadoop.owner }} soft nproc 65536
+{{ hadoop.owner }} hard nproc 65536

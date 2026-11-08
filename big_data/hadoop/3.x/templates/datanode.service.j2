@@ -1,0 +1,21 @@
+[Unit]
+Description=Apache Hadoop DataNode
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+User={{ hadoop.owner }}
+Group={{ hadoop.group }}
+Environment=JAVA_HOME={{ hadoop.java_home }}
+Environment=HADOOP_HOME={{ hadoop.install_dir }}/current
+Environment=HADOOP_CONF_DIR={{ hadoop.install_dir }}/current/etc/hadoop
+Environment=HADOOP_PID_DIR={{ paths.pid_dir }}
+Environment=HADOOP_LOG_DIR={{ paths.log_dir }}
+LimitNOFILE={{ baseline.nofile_limit }}
+ExecStart={{ hadoop.install_dir }}/current/bin/hdfs --daemon start datanode
+ExecStop={{ hadoop.install_dir }}/current/bin/hdfs --daemon stop datanode
+RemainAfterExit=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+export JAVA_HOME={{ hadoop.java_home }}
+export HADOOP_HOME={{ hadoop.install_dir }}/current
+export HADOOP_CONF_DIR={{ hadoop.install_dir }}/current/etc/hadoop
+export HADOOP_PID_DIR={{ paths.pid_dir }}
+export HADOOP_LOG_DIR={{ paths.log_dir }}
+export HADOOP_OS_TYPE=${HADOOP_OS_TYPE:-$(uname -s)}
+{% if baseline.namenode_g1gc %}
+export HADOOP_NAMENODE_OPTS="${HADOOP_NAMENODE_OPTS:-} -XX:+UseG1GC"
+{% endif %}

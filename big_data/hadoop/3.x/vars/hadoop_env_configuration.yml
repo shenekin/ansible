@@ -1,0 +1,24 @@
+---
+hadoop_environment:
+  profile_file: /etc/profile.d/hadoop.sh
+  java_home: "{{ hadoop.java_home }}"
+  hadoop_home: "{{ hadoop.install_dir }}/current"
+  conf_dir: "{{ hadoop.install_dir }}/current/etc/hadoop"
+  path_entries:
+    - "{{ hadoop.install_dir }}/current/bin"
+    - "{{ hadoop.install_dir }}/current/sbin"
+  commands:
+    - hadoop
+    - hdfs
+    - yarn
+    - mapred
+  exports:
+    JAVA_HOME: "{{ hadoop.java_home }}"
+    HADOOP_HOME: "{{ hadoop.install_dir }}/current"
+    HADOOP_CONF_DIR: "{{ hadoop.install_dir }}/current/etc/hadoop"
+    HADOOP_COMMON_HOME: "{{ hadoop.install_dir }}/current"
+    HADOOP_HDFS_HOME: "{{ hadoop.install_dir }}/current"
+    HADOOP_MAPRED_HOME: "{{ hadoop.install_dir }}/current"
+    HADOOP_YARN_HOME: "{{ hadoop.install_dir }}/current"
+    HADOOP_LIBEXEC_DIR: "{{ hadoop.install_dir }}/current/libexec"
+    YARN_HOME: "{{ hadoop.install_dir }}/current"

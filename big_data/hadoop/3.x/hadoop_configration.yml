@@ -1,0 +1,47 @@
+---
+- name: Configure the Hadoop command-line environment
+  hosts: hadoop_cluster
+  become: true
+  gather_facts: false
+  vars_files:
+    - vars/hadoop_configuration.yaml
+    - vars/hadoop_env_configuration.yml
+  tasks:
+    - name: Check that the Hadoop command exists
+      ansible.builtin.stat:
+        path: "{{ hadoop_environment.hadoop_home }}/bin/hadoop"
+      register: hadoop_command
+
+    - name: Check that the configured Java executable exists
+      ansible.builtin.stat:
+        path: "{{ hadoop_environment.java_home }}/bin/java"
+      register: java_command
+
+    - name: Verify the Hadoop and Java installations
+      ansible.builtin.assert:
+        that:
+          - hadoop_command.stat.exists
+          - java_command.stat.exists
+        fail_msg: >-
+          Hadoop or Java was not found at the configured path. Check hadoop.install_dir
+          and hadoop.java_home in vars/hadoop_configuration.yaml on the managed host.
+
+    - name: Configure system-wide Hadoop environment variables
+      ansible.builtin.copy:
+        dest: "{{ hadoop_environment.profile_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by Ansible: Hadoop command-line environment.
+          {% for name, value in hadoop_environment.exports.items() %}
+          export {{ name }}="{{ value }}"
+          {% endfor %}
+          export PATH="{{ hadoop_environment.path_entries | join(':') }}:$PATH"
+
+    - name: Ensure Hadoop commands are available on the system PATH
+      ansible.builtin.file:
+        src: "{{ hadoop_environment.hadoop_home }}/bin/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        state: link
+      loop: "{{ hadoop_environment.commands }}"

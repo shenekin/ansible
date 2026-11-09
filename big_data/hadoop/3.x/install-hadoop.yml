@@ -100,6 +100,25 @@
             paths.mapred_local_dir, paths.yarn_log_dir, paths.pid_dir,
             paths.log_dir, '/data/hadoop/tmp'] | unique }}
 
+    - name: Configure Hadoop runtime directory recreation at boot
+      ansible.builtin.copy:
+        dest: /etc/tmpfiles.d/hadoop.conf
+        content: >-
+          d {{ paths.pid_dir | regex_replace('^/var/run', '/run') }} 0755
+          {{ hadoop.owner }} {{ hadoop.group }} -
+        owner: root
+        group: root
+        mode: "0644"
+      tags:
+        - hadoop_runtime_directory
+
+    - name: Create the Hadoop runtime directory from its tmpfiles rule
+      ansible.builtin.command:
+        cmd: systemd-tmpfiles --create /etc/tmpfiles.d/hadoop.conf
+      changed_when: false
+      tags:
+        - hadoop_runtime_directory
+
     - name: Check whether Hadoop is installed
       ansible.builtin.stat:
         path: "{{ hadoop.install_dir }}/hadoop-{{ hadoop.version }}"

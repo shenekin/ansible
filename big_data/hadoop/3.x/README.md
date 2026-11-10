@@ -102,6 +102,13 @@ usage information. To verify HDFS access as well, when the cluster services are
 running, run:
 
 ```bash
+# 在 hadoop01
+jps                                   # NameNode
+sudo ss -tlnp | grep 9000             # java listen 9000
+
+# 在 hadoop03(任意节点)
+hdfs dfsadmin -report                 # Live datanodes: x
+hdfs dfs -ls /
 hdfs dfs -ls /
 ```
 

@@ -129,6 +129,88 @@ sudo -u hadoop env \
 
 Use the same `sudo -u hadoop env ...` prefix for other HDFS superuser commands, such as `hdfs dfsadmin` operations. Do not set `HADOOP_USER_NAME=hadoop` as an Ubuntu user to bypass HDFS authorization; in simple authentication that is not a secure privilege boundary.
 
+## Open a Hadoop Service-User Shell
+
+The `hadoop` account is configured with `/usr/sbin/nologin`, so direct SSH login and `sudo -iu hadoop` are not the intended access methods. You can still start a shell as this account from your existing `ubuntu` SSH session. This does not change the account's login shell, password, or SSH access, and it keeps the Hadoop systemd services running under their configured `hadoop:hadoop` identity.
+
+### Interactive shell
+
+First connect to a cluster node as `ubuntu`, then start Bash explicitly as `hadoop`:
+
+```bash
+ssh -i ~/.ssh/id_ed25519_pve_host ubuntu@10.168.2.54
+sudo -u hadoop -H /bin/bash
+source /etc/profile.d/hadoop.sh
+```
+
+Confirm the effective identity and environment:
+
+```bash
+whoami
+id
+echo "$HOME"
+echo "$JAVA_HOME"
+echo "$HADOOP_HOME"
+command -v hadoop
+command -v hdfs
+command -v yarn
+```
+
+Expected values include `hadoop` for `whoami`, `/opt/hadoop` for `HOME`, `/usr/lib/jvm/java-11-openjdk-amd64` for `JAVA_HOME`, and `/opt/hadoop/current` for `HADOOP_HOME`. Run the following as `hadoop` to verify HDFS administrative access and YARN connectivity:
+
+```bash
+hdfs dfsadmin -report
+hdfs dfs -ls /
+yarn application -list
+```
+
+Use `exit` to leave the `hadoop` shell and return to the `ubuntu` shell. The interactive Bash was started explicitly; this does not enable SSH login for the service account.
+
+### Run a single command as Hadoop
+
+To run one Hadoop command without opening an interactive shell, explicitly load the system-wide environment:
+
+```bash
+sudo -u hadoop -H /bin/bash -c \
+	'source /etc/profile.d/hadoop.sh && hdfs dfsadmin -report'
+```
+
+For example, to run an HDFS command or submit a YARN job as the `hadoop` operating-system user:
+
+```bash
+sudo -u hadoop -H /bin/bash -c \
+	'source /etc/profile.d/hadoop.sh && hdfs dfs -ls /'
+
+sudo -u hadoop -H /bin/bash -c \
+	'source /etc/profile.d/hadoop.sh && yarn application -list'
+```
+
+Commands run this way are authenticated as `hadoop` by Hadoop's simple authentication configuration. HDFS superuser actions should be limited to administrative work; routine jobs should normally run as their intended user so HDFS permissions and YARN application ownership remain meaningful.
+
+### What still requires Ubuntu sudo
+
+The service account owns Hadoop processes and data, but systemd service management should still be done from the `ubuntu` account with its authorized `sudo` access:
+
+```bash
+sudo systemctl status hadoop-namenode hadoop-datanode \
+	hadoop-resource-manager hadoop-node-manager
+sudo systemctl restart hadoop-datanode
+```
+
+Do not run Hadoop daemon start/stop scripts manually from the service-user shell to replace systemd. The unit files are the source of truth for daemon lifecycle and environment.
+
+### Account security and current group membership
+
+Do not enable direct SSH login or set an interactive password for `hadoop` just to use Hadoop commands. Anyone who can authenticate as `hadoop` can act as the HDFS superuser in this cluster. The supported access path is SSH as `ubuntu`, followed by `sudo -u hadoop` for the required command or shell.
+
+The live account check on Nov 12, 2026 found that `hadoop` belongs to the operating-system `sudo` group on `hadoop01` and `hadoop03`, but not on `hadoop02`. Hadoop does not need this group to run its services or HDFS commands. Review that membership and, if it was not explicitly intended, remove it on the affected hosts using an authorized administrator account:
+
+```bash
+sudo gpasswd -d hadoop sudo
+```
+
+This changes only local Linux sudo-group membership; it is not required for `sudo -u hadoop` from `ubuntu`, and it does not grant or revoke HDFS permissions. Verify with `id hadoop` on each host after any approved group change.
+
 ### Troubleshooting
 
 - **`hadoop`, `hdfs`, or `yarn` is not found:** open a new login session or run `source /etc/profile.d/hadoop.sh`; confirm the symlinks in `/usr/local/bin` and the paths in `vars/hadoop_configuration.yaml` and `vars/hadoop_env_configuration.yml`.
@@ -147,4 +229,70 @@ Use the same `sudo -u hadoop env ...` prefix for other HDFS superuser commands, 
 - Do not enable an interactive shell for the `hadoop` system account just to run its commands; `sudo -u hadoop` is sufficient.
 
 The recommended result is that `ubuntu` can run authorized HDFS and YARN client operations and manage systemd through `sudo`, while Hadoop daemons continue to run as `hadoop:hadoop` and retain their existing filesystem ownership.
+
+## Grant Ubuntu HDFS Superuser Permissions
+
+This cluster uses Hadoop simple authentication, with `dfs.permissions.enabled=true`. The NameNode uses the Linux group configured by `dfs.permissions.superusergroup` as its HDFS superuser group. The active value is Hadoop's default, `supergroup`. To let `ubuntu` run HDFS administrative commands under its own identity, make that Linux group available on every Hadoop node and add `ubuntu` to it. This does not change the Hadoop service user, NameNode metadata, DataNode storage, or systemd units.
+
+The Ansible configuration for this access is kept separate from the main install playbook:
+
+- `configure-hadoop-admin-user.yml` creates the group, adds `ubuntu` as a supplementary member on all cluster hosts, and refreshes the NameNode's user-to-group mapping.
+- `vars/hadoop_admin_user.yml` defines the account, group, group ID, and Hadoop runtime paths.
+
+The configured group ID is `987`; it was checked to be unused on all three current nodes. Use one consistent GID on every node. Before applying this configuration to a different cluster, verify that the chosen GID is free on every host.
+
+### Apply the configuration
+
+Run these commands from the Hadoop 3.x project directory on the control node, with the Ansible environment activated:
+
+```bash
+source ~/.pyenv/versions/ansible-2.21-env/bin/activate
+cd /Users/ekin/Documents/Development_Codes/ansible/big_data/hadoop/3.x
+ansible-playbook -i inventory.ini configure-hadoop-admin-user.yml --syntax-check
+ansible-playbook -i inventory.ini configure-hadoop-admin-user.yml
+```
+
+The playbook is idempotent and can be run again safely. It adds `supergroup` as a supplementary group; it does not replace the account's existing groups. Its NameNode task refreshes the group cache without restarting Hadoop services. In Ansible check mode, creation of a group is only simulated, so a following user task may report that the group does not exist. Use the syntax check and a normal playbook run for this dependent group-and-user workflow.
+
+After the playbook completes, start a new SSH session as `ubuntu`. A session opened before the group change may not have the new supplementary group in its process credentials.
+
+### Verify HDFS administrative permissions as Ubuntu
+
+Run these commands directly as `ubuntu`, without `sudo -u hadoop`:
+
+```bash
+source /etc/profile.d/hadoop.sh
+whoami
+id
+hdfs groups ubuntu
+hdfs dfsadmin -report
+```
+
+Expected results include `ubuntu` from `whoami`, `supergroup` in the output of `id` and `hdfs groups ubuntu`, and a live DataNode report from `hdfs dfsadmin -report`. The current cluster has three live DataNodes.
+
+An optional write check can create and remove a temporary HDFS directory. Use an existing HDFS parent such as `/user`; do not assume `/tmp` exists in HDFS:
+
+```bash
+test_path=/user/.ubuntu-admin-check
+hdfs dfs -mkdir "$test_path"
+hdfs dfs -test -d "$test_path"
+hdfs dfs -rmdir "$test_path"
+```
+
+### YARN and MapReduce permissions
+
+The current Hadoop configuration reports `yarn.admin.acl=*`, `yarn.acl.enable=false`, and `mapreduce.cluster.acls.enabled=false`. Under these current settings, no separate YARN or MapReduce ACL change is needed for `ubuntu` to use the available commands. For example:
+
+```bash
+yarn application -list
+yarn node -list
+```
+
+An empty application list is normal when no applications are running. If YARN ACLs are enabled or customized later, review `yarn.admin.acl`, `yarn.acl.enable`, and the MapReduce ACL properties separately; membership in HDFS `supergroup` does not automatically grant privileges in every Hadoop subsystem.
+
+### Permission scope and security
+
+Membership in `supergroup` gives `ubuntu` HDFS superuser privileges. This is equivalent to the Hadoop service identity for HDFS authorization, but it does not make `ubuntu` the Linux `hadoop` account, does not grant additional Linux filesystem ownership, and does not make it operating-system root. Use `sudo` separately for systemd or other operating-system administration.
+
+Treat the Ubuntu SSH credentials as highly privileged: a compromised `ubuntu` account can perform HDFS administrative operations. Do not add general-purpose users to `supergroup`. Keep the daemons running as `hadoop:hadoop`, and do not change `/data/hadoop` ownership or reformat the NameNode to grant user permissions.
 

@@ -1,0 +1,38 @@
+---
+- name: Grant Ubuntu HDFS superuser-group membership
+  hosts: hadoop_cluster
+  become: true
+  gather_facts: false
+  vars_files:
+    - vars/hadoop_admin_user.yml
+
+  tasks:
+    - name: Ensure the HDFS superuser group exists with a consistent group ID
+      ansible.builtin.group:
+        name: "{{ hdfs_superuser_group }}"
+        gid: "{{ hdfs_superuser_group_gid }}"
+        system: true
+        state: present
+
+    - name: Add the Ubuntu account to the HDFS superuser group
+      ansible.builtin.user:
+        name: "{{ hadoop_admin_user }}"
+        groups: "{{ hdfs_superuser_group }}"
+        append: true
+        state: present
+
+    - name: Refresh the NameNode user-to-group mapping
+      ansible.builtin.command:
+        argv:
+          - sudo
+          - -u
+          - "{{ hadoop_service_user }}"
+          - env
+          - "JAVA_HOME={{ hadoop_java_home }}"
+          - "HADOOP_HOME={{ hadoop_install_dir }}"
+          - "HADOOP_CONF_DIR={{ hadoop_conf_dir }}"
+          - "{{ hadoop_install_dir }}/bin/hdfs"
+          - dfsadmin
+          - -refreshUserToGroupsMappings
+      changed_when: false
+      when: inventory_hostname in groups['name_nodes']

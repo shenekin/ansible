@@ -1,0 +1,8 @@
+---
+hadoop_admin_user: ubuntu
+hdfs_superuser_group: supergroup
+hdfs_superuser_group_gid: 987
+hadoop_service_user: hadoop
+hadoop_java_home: /usr/lib/jvm/java-11-openjdk-amd64
+hadoop_install_dir: /opt/hadoop/current
+hadoop_conf_dir: /opt/hadoop/current/etc/hadoop

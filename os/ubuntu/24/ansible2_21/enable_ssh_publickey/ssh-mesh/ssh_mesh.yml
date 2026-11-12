@@ -1,0 +1,43 @@
+---
+- name: Build a mutual SSH key mesh
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    - name: Ensure the remote user's SSH directory exists
+      ansible.builtin.file:
+        path: "{{ ansible_env.HOME }}/.ssh"
+        state: directory
+        owner: "{{ ansible_user }}"
+        mode: "0700"
+
+    - name: Generate the node's Ed25519 key pair if absent
+      community.crypto.openssh_keypair:
+        path: "{{ ansible_env.HOME }}/.ssh/id_ed25519"
+        type: ed25519
+        comment: "{{ inventory_hostname }}"
+        state: present
+
+    - name: Read the node's public key
+      ansible.builtin.slurp:
+        src: "{{ ansible_env.HOME }}/.ssh/id_ed25519.pub"
+      register: pubkey_slurp
+
+    - name: Register the node's public key
+      ansible.builtin.set_fact:
+        my_pubkey: "{{ pubkey_slurp.content | b64decode | trim }}"
+
+    - name: Aggregate public keys from all inventory hosts
+      ansible.builtin.set_fact:
+        all_pubkeys: >-
+          {{ groups['all']
+             | map('extract', hostvars, 'my_pubkey')
+             | select
+             | join('\n') }}
+
+    - name: Add all cluster public keys to the remote user's authorized_keys
+      ansible.posix.authorized_key:
+        user: "{{ ansible_user }}"
+        key: "{{ all_pubkeys }}"
+        state: present
+        exclusive: false

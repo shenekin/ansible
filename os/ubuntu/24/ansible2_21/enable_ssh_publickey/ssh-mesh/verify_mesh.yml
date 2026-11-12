@@ -1,0 +1,39 @@
+---
+- name: Verify mutual SSH access between cluster nodes
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Test SSH access to every peer
+      ansible.builtin.command:
+        argv:
+          - ssh
+          - -o
+          - BatchMode=yes
+          - -o
+          - ConnectTimeout=3
+          - -o
+          - StrictHostKeyChecking=accept-new
+          - -l
+          - "{{ ansible_user }}"
+          - "{{ hostvars[item].ansible_host | default(item) }}"
+          - hostname
+      loop: "{{ groups['all'] | reject('equalto', inventory_hostname) | list }}"
+      loop_control:
+        label: "{{ item }}"
+      changed_when: false
+      failed_when: false
+      register: ssh_test
+
+    - name: Report peer connectivity
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} -> {{ item.item }}: {{ 'OK' if item.rc == 0 else 'FAIL' }}"
+      loop: "{{ ssh_test.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Fail if any peer connection failed
+      ansible.builtin.assert:
+        that:
+          - ssh_test.results | selectattr('rc', 'ne', 0) | list | length == 0
+        fail_msg: "One or more SSH mesh connections failed. Review the peer results above."

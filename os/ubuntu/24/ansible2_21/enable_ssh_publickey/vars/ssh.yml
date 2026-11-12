@@ -1,0 +1,10 @@
+---
+# Authentication settings for enable-ssh-access.yml.
+# The account must already exist on each managed host.
+ssh_login_user: ubuntu
+ssh_public_key_file: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519_pve_host.pub"
+
+ssh_password_authentication: "yes"
+ssh_public_key_authentication: "yes"
+ssh_keyboard_interactive_authentication: "no"
+ssh_permit_root_login: "no"

@@ -296,3 +296,81 @@ Membership in `supergroup` gives `ubuntu` HDFS superuser privileges. This is equ
 
 Treat the Ubuntu SSH credentials as highly privileged: a compromised `ubuntu` account can perform HDFS administrative operations. Do not add general-purpose users to `supergroup`. Keep the daemons running as `hadoop:hadoop`, and do not change `/data/hadoop` ownership or reformat the NameNode to grant user permissions.
 
+## HDFS DFS Command Reference (Hadoop 3.3.6)
+
+The command list and option syntax below were read from the live cluster on `hadoop01` with `hdfs dfs -help`. Connect once as `ubuntu`, then define this helper in the remote shell to run each example using the requested Hadoop service-user context:
+
+```bash
+ssh -i ~/.ssh/id_ed25519_pve_host ubuntu@10.168.2.54
+hdfs_dfs() {
+	sudo -u hadoop -H /bin/bash -c \
+		'source /etc/profile.d/hadoop.sh && hdfs dfs "$@"' hdfs-dfs "$@"
+}
+```
+
+For example, `hdfs_dfs ls /` runs `hdfs dfs -ls /` after loading the Hadoop environment. Every command below is therefore authenticated to HDFS as the operating-system user `hadoop`, not `ubuntu`. Files created in HDFS will normally be owned by `hadoop`. Paths such as `/user/hadoop/cli-guide` are examples; create the directory first and substitute paths that are appropriate for your cluster. Local file paths in upload/download examples refer to files on `hadoop01`, and must be accessible to the `hadoop` Linux account.
+
+### Listing, reading, and checking data
+
+- `-ls`: List a path's children; `-R` recurses, `-h` makes sizes human-readable, `-C` prints paths only, and `-d` lists a directory itself. With no path, it lists the HDFS home for the client identity (`hadoop` here). Example: `hdfs_dfs ls -h -R /user/hadoop/cli-guide`.
+- `-cat`: Write one or more HDFS files to standard output. Example: `hdfs_dfs cat /user/hadoop/cli-guide/part-00000`. Avoid using it for large files because all content is sent to the terminal or pipe.
+- `-text`: Display a file as text and decode supported Hadoop formats/compressions where possible. Example: `hdfs_dfs text /user/hadoop/cli-guide/data.gz`.
+- `-head`: Print the first 1 KB of a file. Example: `hdfs_dfs head /user/hadoop/cli-guide/input.txt`.
+- `-tail`: Print the end of a file; `-f` follows new data, and `-s` sets the polling interval in seconds. Example: `hdfs_dfs tail -f /user/hadoop/cli-guide/app.log`.
+- `-checksum`: Print the HDFS checksum for files. This contacts DataNodes for file blocks, so avoid running it across many files. Example: `hdfs_dfs checksum /user/hadoop/cli-guide/input.txt`.
+- `-stat`: Print file metadata; an optional format can select fields. Common substitutions include `%b` (size in bytes), `%r` (replication), `%y` (modification time), and `%n` (name). Example: `hdfs_dfs stat '%b bytes, replication=%r, modified=%y, %n' /user/hadoop/cli-guide/input.txt`.
+- `-test`: Return success/failure in the process exit code for a path check: `-e` exists, `-d` directory, `-f` file, `-s` non-empty, `-z` empty, `-r` readable, and `-w` writable. Example: `hdfs_dfs test -e /user/hadoop/cli-guide/input.txt`.
+- `-count`: Count directories, files, and bytes below paths. `-h` humanizes sizes, `-q` reports quotas, `-u` quota usage, `-s` snapshot counts, `-e` erasure coding policy, and `-x` excludes snapshots. Example: `hdfs_dfs count -h /user/hadoop/cli-guide`.
+- `-du`: Show content size and space consumed for matching paths; `-s` summarizes, `-h` humanizes sizes, and `-x` excludes snapshots. Without `-s`, output is summarized one directory level deep. Example: `hdfs_dfs du -h -s /user/hadoop/cli-guide`.
+- `-df`: Show filesystem capacity, free space, and used space; `-h` humanizes sizes. Example: `hdfs_dfs df -h /`.
+- `-find`: Search recursively by name and print matching paths; `-iname` is case-insensitive. Example: `hdfs_dfs find /user/hadoop/cli-guide -name '*.txt' -print`.
+- `-getfacl`: Display access and default ACL entries; `-R` includes descendants. Example: `hdfs_dfs getfacl /user/hadoop/cli-guide`.
+- `-getfattr`: Display extended attributes; use `-n name` for one attribute or `-d` for all, and optionally `-e text|hex|base64` to encode values. Example: `hdfs_dfs getfattr -d /user/hadoop/cli-guide/input.txt`.
+- `-help`: Show help for every command or the specified command(s). Example: `hdfs_dfs help put rm`.
+- `-usage`: Show compact usage syntax for every command or selected command(s). Example: `hdfs_dfs usage chmod`.
+
+### Creating, uploading, downloading, and moving files
+
+- `-mkdir`: Create HDFS directories; `-p` also creates missing parent directories and does not fail if the directory already exists. Example: `hdfs_dfs mkdir -p /user/hadoop/cli-guide`.
+- `-put`: Upload local files to HDFS; `-f` overwrites, `-p` preserves attributes, and `-l` requests a data-node-local write. Example: `hdfs_dfs put ./input.txt /user/hadoop/cli-guide/`.
+- `-copyFromLocal`: Alias for `-put`. Example: `hdfs_dfs copyFromLocal ./input.txt /user/hadoop/cli-guide/`.
+- `-moveFromLocal`: Upload local files to HDFS and remove the local source after a successful move. Example: `hdfs_dfs moveFromLocal ./finished.txt /user/hadoop/cli-guide/`.
+- `-get`: Download HDFS files to the local filesystem; `-f` overwrites, `-p` preserves attributes, and `-crc` writes a local checksum file. Example: `hdfs_dfs get /user/hadoop/cli-guide/input.txt ./downloads/`.
+- `-copyToLocal`: Alias for `-get`. Example: `hdfs_dfs copyToLocal /user/hadoop/cli-guide/input.txt ./downloads/`.
+- `-moveToLocal`: Intended to move an HDFS path to local storage, but Hadoop 3.3.6 reports this command as not implemented. Use `get` followed by a separately verified HDFS removal only when that workflow is intended.
+- `-getmerge`: Download and concatenate files from an HDFS directory into one local file; `-nl` adds a newline between files. Example: `hdfs_dfs getmerge -nl /user/hadoop/cli-guide/parts ./merged.txt`.
+- `-appendToFile`: Append local file contents to an HDFS file, creating the destination if needed. A local source of `-` reads standard input. Example: `printf 'next line\n' | hdfs_dfs appendToFile - /user/hadoop/cli-guide/input.txt`.
+- `-cp`: Copy HDFS paths within HDFS. For multiple sources the destination must be a directory; `-f` overwrites and `-p` can preserve selected timestamps, ownership, permissions, ACLs, and extended attributes. Example: `hdfs_dfs cp /user/hadoop/cli-guide/input.txt /user/hadoop/cli-guide/input-copy.txt`.
+- `-mv`: Rename or move HDFS paths within the same filesystem. For multiple sources the destination must be a directory. Example: `hdfs_dfs mv /user/hadoop/cli-guide/input-copy.txt /user/hadoop/cli-guide/renamed.txt`.
+- `-concat`: Concatenate source files into an existing target in the same HDFS directory; source files are removed by the operation. Use only after verifying the target and sources. Example: `hdfs_dfs concat /user/hadoop/cli-guide/all.txt /user/hadoop/cli-guide/part-00000 /user/hadoop/cli-guide/part-00001`.
+
+### Removing or changing files
+
+- `-rm`: Delete files; `-r`/`-R` recursively deletes directories, `-f` ignores missing paths, and `-skipTrash` bypasses Trash for immediate deletion. Example: `hdfs_dfs rm /user/hadoop/cli-guide/old.txt`. Review paths carefully; recursive deletion and `-skipTrash` are destructive.
+- `-rmdir`: Remove empty directories only. `--ignore-fail-on-non-empty` suppresses errors for non-empty directories. Example: `hdfs_dfs rmdir /user/hadoop/cli-guide/empty-dir`.
+- `-expunge`: Remove items from HDFS Trash that are older than the configured retention period; `-immediate` performs immediate expunging. Example: `hdfs_dfs expunge`. This can make trashed files unrecoverable.
+- `-chmod`: Change HDFS permission bits using octal or symbolic modes; `-R` applies recursively. Example: `hdfs_dfs chmod 640 /user/hadoop/cli-guide/input.txt`.
+- `-chown`: Change HDFS owner and optionally group; `-R` applies recursively. Example: `hdfs_dfs chown ubuntu:supergroup /user/ubuntu/input.txt`. Requires sufficient HDFS privilege; verify the target before using recursively.
+- `-chgrp`: Change the HDFS group, equivalent to `chown` with only a group. Example: `hdfs_dfs chgrp supergroup /user/hadoop/cli-guide`.
+- `-setrep`: Set the replication factor for files; `-R` recurses and `-w` waits for replication to reach the requested value. Example: `hdfs_dfs setrep -w 2 /user/hadoop/cli-guide/input.txt`.
+- `-touch`: Update access/modification times or create a zero-length file if absent. `-a` changes access time only, `-m` modification time only, `-t` accepts `yyyyMMdd:HHmmss`, and `-c` prevents creation. Example: `hdfs_dfs touch -m /user/hadoop/cli-guide/input.txt`.
+- `-touchz`: Create a zero-length HDFS file; it fails if the target already exists with non-zero length. Example: `hdfs_dfs touchz /user/hadoop/cli-guide/empty.marker`.
+- `-truncate`: Reduce file length to the specified byte count; it cannot be used to extend a file. `-w` waits for any required block recovery. Example: `hdfs_dfs truncate -w 1024 /user/hadoop/cli-guide/large.txt`. This discards file content beyond the new length.
+- `-setfacl`: Modify ACLs: `-m` adds/updates entries, `-x` removes entries, `-b` removes extended access entries, `-k` removes default ACLs, `--set` replaces ACL entries, and `-R` recurses. Example: `hdfs_dfs setfacl -m user:ubuntu:r-- /user/hadoop/cli-guide/input.txt`. Review ACL inheritance and existing entries first.
+- `-setfattr`: Set or remove an extended attribute with `-n name -v value` or `-x name`. Example: `hdfs_dfs setfattr -n user.note -v reviewed /user/hadoop/cli-guide/input.txt`.
+
+### Snapshots
+
+Snapshot commands require the target directory to be configured as snapshottable by an HDFS administrator. Snapshot creation preserves a point-in-time view; deleting or renaming a snapshot changes that history.
+
+- `-createSnapshot`: Create a snapshot, optionally with a supplied name. Example: `hdfs_dfs createSnapshot /user/hadoop/cli-guide before-cleanup`.
+- `-deleteSnapshot`: Delete a named snapshot. Example: `hdfs_dfs deleteSnapshot /user/hadoop/cli-guide before-cleanup`.
+- `-renameSnapshot`: Rename a named snapshot. Example: `hdfs_dfs renameSnapshot /user/hadoop/cli-guide before-cleanup after-cleanup`.
+
+### Usage notes
+
+- Use `hdfs_dfs help <command>` for detailed options from the installed Hadoop version, for example `hdfs_dfs help setfacl`.
+- Quote paths containing spaces or shell wildcard characters so they are passed as one argument; Hadoop also supports its own path glob patterns.
+- Treat `rm`, `rm -r`, `rm -skipTrash`, `truncate`, recursive ownership/permission changes, ACL replacement, and snapshot deletion as potentially destructive. Confirm the full HDFS path and intended effect before running them.
+- This helper deliberately runs every operation as `hadoop`. For routine work that should be owned and authorized as `ubuntu`, use the Ubuntu CLI directly instead of this helper, and follow the HDFS permissions described earlier in this guide.
+
